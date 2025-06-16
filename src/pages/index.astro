@@ -97,21 +97,54 @@ try {
     </div>
 
     <script is:inline>
+  ---
+// src/pages/index.astro (Frontmatter - lado del servidor)
+// ... tu código existente en el frontmatter
+const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
+const USERNAME_TO_FETCH = 'quigua';
+const POSTS_PER_PAGE = 20;
+
+let initialPosts = [];
+let hasMorePosts = false;
+let nextStartAuthor = null;
+let nextStartPermlink = null;
+
+try {
+    const response = await fetch(`<span class="math-inline">\{FUNCTIONS\_BASE\_URL\}/get\-user\-posts?username\=</span>{USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}`);
+    const data = await response.json();
+
+    if (data.error) {
+        console.error("Error al cargar posts iniciales:", data.error, data.details);
+    } else {
+        initialPosts = data.posts;
+        hasMorePosts = data.hasMore;
+        nextStartAuthor = data.nextPage?.startAuthor || null;
+        nextStartPermlink = data.nextPage?.permlink || null; // Corregir aquí: debería ser permlink, no startPermlink
+    }
+} catch (error) {
+    console.error("Error al conectar con la función Netlify para posts iniciales:", error);
+}
+---
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <script>
+  import { marked } from 'marked';// ... tu código que usa marked.parse()</script>
+</head>
+<body>
+    <script is:inline>
         // JavaScript que se ejecuta en el navegador (cliente)
         const FUNCTIONS_BASE_URL_CLIENT = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
         const USERNAME_TO_FETCH_CLIENT = 'quigua';
         const POSTS_PER_PAGE_CLIENT = 20;
 
-        let currentStartAuthor = "---nextStartAuthor---"; // Placeholder que Astro reemplazará
-        let currentStartPermlink = "---nextStartPermlink---"; // Placeholder
+        // Inyectamos las variables desde el frontmatter directamente en el script
+        let currentStartAuthor = {JSON.stringify(nextStartAuthor)};
+        let currentStartPermlink = {JSON.stringify(nextStartPermlink)};
+        let hasMorePostsFromBuild = {JSON.stringify(hasMorePosts)};
 
         const postsContainerClient = document.getElementById('posts-container');
         const loadMoreButtonClient = document.getElementById('load-more-button');
-
-        // Reemplazar los placeholders con los valores reales del servidor
-        // Esto es necesario porque el JS inline no ve las variables del frontmatter directamente
-        currentStartAuthor = currentStartAuthor === "---nextStartAuthor---" ? null : currentStartAuthor;
-        currentStartPermlink = currentStartPermlink === "---nextStartPermlink---" ? null : currentStartPermlink;
 
         // Función para cargar más posts desde el cliente
         async function fetchMorePosts() {
@@ -129,12 +162,15 @@ try {
 
                 if (data.error) {
                     console.error("Error al cargar más posts:", data.error, data.details);
+                    postsContainerClient.innerHTML += `<li>Error al cargar más posts: ${data.error}</li>`; // Muestra el error
                     loadMoreButtonClient.textContent = 'Error al cargar';
+                    loadMoreButtonClient.disabled = false;
                     return;
                 }
 
                 if (data.posts.length === 0) {
                     loadMoreButtonClient.style.display = 'none'; // No hay más posts
+                    postsContainerClient.innerHTML += '<li>No hay más posts para cargar.</li>';
                     return;
                 }
 
@@ -156,58 +192,33 @@ try {
 
                 if (data.hasMore) {
                     currentStartAuthor = data.nextPage.startAuthor;
-                    currentStartPermlink = data.nextPage.startPermlink;
+                    currentStartPermlink = data.nextPage.permlink; // Corregir aquí: debería ser permlink, no startPermlink
                     loadMoreButtonClient.textContent = 'Cargar más';
                     loadMoreButtonClient.disabled = false;
                 } else {
                     loadMoreButtonClient.style.display = 'none';
+                    postsContainerClient.innerHTML += '<li>Todos los posts han sido cargados.</li>';
                 }
 
             } catch (error) {
                 console.error("Error fetching more posts:", error);
+                postsContainerClient.innerHTML += `<li>Error de conexión al cargar más posts: ${error.message}</li>`; // Muestra el error
                 loadMoreButtonClient.textContent = 'Error de conexión';
                 loadMoreButtonClient.disabled = false;
             }
         }
 
-        if (loadMoreButtonClient) { // Asegurarse de que el botón existe
+        // Asignar el event listener al botón "Cargar más"
+        if (loadMoreButtonClient) {
             loadMoreButtonClient.addEventListener('click', fetchMorePosts);
-        }
-
-        // Para que Astro inyecte los valores de nextStartAuthor y nextStartPermlink del servidor
-        // Tendremos que usar una forma de pasar variables del frontmatter a is:inline scripts
-        // Para simplificar, haremos una llamada inicial solo si no hay posts cargados,
-        // o si hasMorePosts es true (siempre que el botón esté visible).
-        // Astro lo renderizará inicialmente, y luego el JS del cliente manejará el resto.
-        // Para pasar variables del frontmatter (lado del servidor) a un script con `is:inline` (lado del cliente),
-        // la forma más sencilla es inyectarlas directamente en el HTML como atributos de datos o variables globales.
-        // Por simplicidad en este ejemplo, he usado placeholders que deberías reemplazar manualmente
-        // o usar un truco como: <script is:inline> const x = '{someAstroVar}'; </script>
-
-        // Para que este ejemplo funcione, necesitamos que nextStartAuthor y nextStartPermlink
-        // sean pasados desde el frontmatter a este script inlined.
-        // Una forma común es así:
-        document.addEventListener('DOMContentLoaded', () => {
-            const initialDataScript = document.createElement('script');
-            initialDataScript.type = 'application/json';
-            initialDataScript.id = 'initial-posts-data';
-            initialDataScript.textContent = JSON.stringify({
-                nextStartAuthor: nextStartAuthor,
-                nextStartPermlink: nextStartPermlink,
-                hasMore: hasMorePosts
-            });
-            document.body.appendChild(initialDataScript);
-
-            const dataFromAstro = JSON.parse(document.getElementById('initial-posts-data').textContent);
-            currentStartAuthor = dataFromAstro.nextStartAuthor;
-            currentStartPermlink = dataFromAstro.nextStartPermlink;
-
-            if (!dataFromAstro.hasMore && loadMoreButtonClient) {
-                 loadMoreButtonClient.style.display = 'none';
+            // Ocultar el botón si no hay más posts desde la carga inicial del servidor
+            if (!hasMorePostsFromBuild) {
+                loadMoreButtonClient.style.display = 'none';
             }
-        });
-
-
+        }
+    </script>
+</body>
+</html>
     </script>
 </body>
 </html>

@@ -91,9 +91,7 @@ if (author && permlink) {
             const postBodyContentDiv = document.getElementById('post-body-content');
             if (postBodyContentDiv) {
                 // Astro pasa el body como una string. marked.parse la convierte.
-                const rawBody = "---bodyPlaceholder---"; // Usaremos un placeholder para el cuerpo
-                // Reemplazar el placeholder con el valor real del servidor (del frontmatter)
-                const actualBody = {JSON.stringify(postDetail?.body || '')}; // Inyectar directamente el body
+                const actualBody = {JSON.stringify(postDetail ? postDetail.body : '')};
 
                 try {
                     // Asegurarse de que Marked.js está cargado y disponible
