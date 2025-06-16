@@ -5,48 +5,53 @@ exports.handler = async (event, context) => {
     hive.config.set('websocket', 'https://api.hive.blog');
 
     const username = event.queryStringParameters.username || 'quigua';
-    const limit = parseInt(event.queryStringParameters.limit) || 20; // Límite de publicaciones a retornar
-    const startPermlink = event.queryStringParameters.start_permlink || null;
-    const startAuthor = event.queryStringParameters.start_author || null; // No usado directamente con este método pero se mantiene para consistencia
+    const limit = parseInt(event.queryStringParameters.limit) || 20; 
+    let startPermlink = event.queryStringParameters.start_permlink || null;
 
     const posts = [];
     let hasMore = true;
     let count = 0;
-    const fetchBatchSize = 100; // Cuántas publicaciones pedir en cada llamada
-    let lastPermlink = startPermlink; // Usar para paginación
+    const fetchBatchSize = 100; 
 
     try {
-        // Este método busca discusiones (posts) por autor ANTES de una fecha/permlink dado.
-        // Es más adecuado para obtener publicaciones originales de un autor.
         while (hasMore && count < limit) {
             const discussions = await hive.api.getDiscussionsByAuthorBeforeDateAsync(
                 username,
-                lastPermlink, // Si es null, empieza desde las más recientes
-                '', // fecha: vacío para que use el permlink como punto de inicio
+                lastPermlink, // Este debería ser 'startPermlink' para la primera llamada y luego 'lastPermlink'
+                '', 
                 fetchBatchSize
             );
 
-            // Si no hay discusiones, o solo trajo el elemento de inicio de la iteración anterior,
-            // significa que no hay más publicaciones.
-            if (discussions.length === 0 || (discussions.length === 1 && discussions[0].permlink === lastPermlink)) {
+            // IMPORTANTE: getDiscussionsByAuthorBeforeDateAsync incluye el item de inicio en el resultado si no es null
+            // Si lastPermlink tiene un valor y el primer item del batch coincide, lo eliminamos.
+            let postsToAdd = discussions;
+            if (lastPermlink && discussions.length > 0 && discussions[0].permlink === lastPermlink) {
+                postsToAdd = discussions.slice(1);
+            }
+
+            if (postsToAdd.length === 0) {
                 hasMore = false;
                 break;
             }
 
-            // Filtrar el duplicado si estamos en paginación
-            const postsToAdd = lastPermlink ? discussions.slice(1) : discussions;
-
             for (const post of postsToAdd) {
                 if (count < limit) {
+                    // Asegurarse de que las propiedades existen antes de intentar acceder a ellas
+                    const title = post.title || 'Sin título';
+                    const body = post.body || '';
+                    const permlink = post.permlink || '';
+                    const author = post.author || username; // Debería ser siempre 'username' aquí
+
                     posts.push({
                         id: post.id,
-                        author: post.author,
-                        permlink: post.permlink,
-                        title: post.title,
-                        summary: post.body ? post.body.substring(0, 200) + (post.body.length > 200 ? '...' : '') : '',
+                        author: author,
+                        permlink: permlink,
+                        title: title,
+                        summary: body.substring(0, 200) + (body.length > 200 ? '...' : ''),
                         created: post.created,
-                        url: `https://hive.blog/@<span class="math-inline">\{post\.author\}/</span>{post.permlink}`, // URL CORRECTA
-                        body: post.body // Incluir el cuerpo completo
+                        // Asegurarse de que se usan backticks (`) para la interpolación
+                        url: `https://hive.blog/@${author}/${permlink}`, 
+                        body: body 
                     });
                     count++;
                 } else {
@@ -54,10 +59,15 @@ exports.handler = async (event, context) => {
                 }
             }
 
-            if (postsToAdd.length < fetchBatchSize || count >= limit) {
-                hasMore = false;
-            } else {
+            // Actualizar lastPermlink para la próxima paginación
+            if (postsToAdd.length > 0) {
                 lastPermlink = postsToAdd[postsToAdd.length - 1].permlink;
+            } else {
+                hasMore = false; // No hay más posts en este batch
+            }
+
+            if (postsToAdd.length < fetchBatchSize) {
+                hasMore = false; // Si el batch es menor, no hay más para traer
             }
         }
 
@@ -65,8 +75,8 @@ exports.handler = async (event, context) => {
             statusCode: 200,
             body: JSON.stringify({
                 username: username,
-                posts: posts, // Esto ahora solo contendrá publicaciones originales
-                reblogs: [], // No podemos obtener reblogs con este método directamente, se dejará vacío por ahora
+                posts: posts, 
+                reblogs: [], // Como getDiscussionsByAuthorBeforeDateAsync no devuelve reblogs
                 hasMore: hasMore,
                 next_start_permlink: posts.length > 0 ? posts[posts.length - 1].permlink : null,
             }),
