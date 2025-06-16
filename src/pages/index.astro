@@ -1,7 +1,8 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import Welcome from '../components/Welcome.astro';
-import HiveBlockInfo from '../components/HiveBlockInfo.jsx'; // Importa tu componente de React
+import HiveBlockInfo from '../components/HiveBlockInfo.jsx';
+import UserPosts from '../components/UserPosts.jsx'; // ¡Importa tu nuevo componente!
 ---
 
 <Layout title="Welcome to Astro.">
@@ -10,10 +11,14 @@ import HiveBlockInfo from '../components/HiveBlockInfo.jsx'; // Importa tu compo
     </p>
 
     <section class="prose">
-      {/* Aquí es donde insertamos el componente de React. */}
-      {/* La directiva `client:load` asegura que el componente se cargue y ejecute en el navegador. */}
       <HiveBlockInfo client:load /> 
     </section>
+
+    {/* Aquí insertamos el componente para las publicaciones del usuario */}
+    <section class="prose">
+      <UserPosts client:load username="quigua" /> {/* Pasamos el nombre de usuario "quigua" */}
+    </section>
+
   </main>
 </Layout>
 
