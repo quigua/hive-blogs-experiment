@@ -1,0 +1,9 @@
+[build]
+    functions = "netlify/functions"
+    publish = "dist"
+    command = "npm run build"
+
+[functions]
+    node_bundler = "esbuild"
+    # Opcional: Aumenta el tiempo de espera si tus funciones pueden tardar más.
+    # timeout = 10
