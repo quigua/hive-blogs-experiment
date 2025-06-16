@@ -21,20 +21,19 @@ exports.handler = async (event, context) => {
     console.log(`Buscando post para author: ${author}, permlink: ${permlink}`);
 
     try {
-        // hive.api.getDiscussionsByPermlinkAsync es ideal para un solo post
-        // El primer parámetro es el autor, el segundo el permlink
-        const postData = await hive.api.getDiscussionsByPermlinkAsync(author, permlink);
+        // *** CORRECCIÓN APLICADA AQUÍ: Usando getContentAsync ***
+        const postData = await hive.api.getContentAsync(author, permlink);
 
-        // getDiscussionsByPermlinkAsync debería devolver un solo objeto de post si lo encuentra
-        if (!postData) {
-            console.warn(`No se encontró el post para author: ${author}, permlink: ${permlink}`);
+        // getContentAsync devuelve un objeto vacío si no encuentra el post, no null
+        if (!postData || Object.keys(postData).length === 0 || postData.id === 0) {
+            console.warn(`No se encontró el post o el post está vacío para author: ${author}, permlink: ${permlink}`);
             return {
                 statusCode: 404,
-                body: JSON.stringify({ error: "Post no encontrado." }),
+                body: JSON.stringify({ error: "Post no encontrado o contenido vacío." }),
             };
         }
 
-        // Construcción segura de la URL usando post.author y post.permlink
+        // Construcción segura de la URL
         const fullUrl = `https://hive.blog/@<span class="math-inline">\{postData\.author\}/</span>{postData.permlink}`;
 
         const singlePost = {
@@ -45,10 +44,7 @@ exports.handler = async (event, context) => {
             body: postData.body, // El cuerpo completo del post
             created: postData.created,
             url: fullUrl,
-            // Puedes añadir más propiedades si las necesitas de postData, como:
-            // votes: postData.active_votes,
-            // json_metadata: JSON.parse(postData.json_metadata || '{}'),
-            // category: postData.category
+            // Puedes añadir más propiedades si las necesitas de postData
         };
 
         console.log(`Post encontrado y procesado: ${singlePost.permlink}`);
