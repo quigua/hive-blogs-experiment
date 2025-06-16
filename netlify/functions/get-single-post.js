@@ -34,7 +34,8 @@ exports.handler = async (event, context) => {
         }
 
         // Construcción segura de la URL
-        const fullUrl = `https://hive.blog/@<span class="math-inline">\{postData\.author\}/</span>{postData.permlink}`;
+        const fullUrl = `https://hive.blog/@{postData.permlink}`;
+        
 
         const singlePost = {
             id: postData.id,
