@@ -6,7 +6,7 @@ exports.handler = async (event, context) => {
 
     const username = event.queryStringParameters.username || 'quigua';
     const limit = parseInt(event.queryStringParameters.limit) || 20; 
-    let startPermlink = event.queryStringParameters.start_permlink || null;
+    let startPermlink = event.queryStringParameters.start_permlink || null; // Se mantiene la variable
 
     const posts = [];
     let hasMore = true;
@@ -17,15 +17,14 @@ exports.handler = async (event, context) => {
         while (hasMore && count < limit) {
             const discussions = await hive.api.getDiscussionsByAuthorBeforeDateAsync(
                 username,
-                lastPermlink, // Este debería ser 'startPermlink' para la primera llamada y luego 'lastPermlink'
+                startPermlink, // <-- ¡CORRECCIÓN AQUÍ! Usamos startPermlink
                 '', 
                 fetchBatchSize
             );
 
-            // IMPORTANTE: getDiscussionsByAuthorBeforeDateAsync incluye el item de inicio en el resultado si no es null
-            // Si lastPermlink tiene un valor y el primer item del batch coincide, lo eliminamos.
             let postsToAdd = discussions;
-            if (lastPermlink && discussions.length > 0 && discussions[0].permlink === lastPermlink) {
+            // Si startPermlink tiene un valor y el primer item del batch coincide, lo eliminamos.
+            if (startPermlink && discussions.length > 0 && discussions[0].permlink === startPermlink) {
                 postsToAdd = discussions.slice(1);
             }
 
@@ -36,11 +35,10 @@ exports.handler = async (event, context) => {
 
             for (const post of postsToAdd) {
                 if (count < limit) {
-                    // Asegurarse de que las propiedades existen antes de intentar acceder a ellas
                     const title = post.title || 'Sin título';
                     const body = post.body || '';
                     const permlink = post.permlink || '';
-                    const author = post.author || username; // Debería ser siempre 'username' aquí
+                    const author = post.author || username; 
 
                     posts.push({
                         id: post.id,
@@ -49,8 +47,7 @@ exports.handler = async (event, context) => {
                         title: title,
                         summary: body.substring(0, 200) + (body.length > 200 ? '...' : ''),
                         created: post.created,
-                        // Asegurarse de que se usan backticks (`) para la interpolación
-                        url: `https://hive.blog/@${author}/${permlink}`, 
+                        url: `https://hive.blog/@<span class="math-inline">\{author\}/</span>{permlink}`, 
                         body: body 
                     });
                     count++;
@@ -59,15 +56,15 @@ exports.handler = async (event, context) => {
                 }
             }
 
-            // Actualizar lastPermlink para la próxima paginación
+            // Actualizar startPermlink para la próxima paginación
             if (postsToAdd.length > 0) {
-                lastPermlink = postsToAdd[postsToAdd.length - 1].permlink;
+                startPermlink = postsToAdd[postsToAdd.length - 1].permlink;
             } else {
-                hasMore = false; // No hay más posts en este batch
+                hasMore = false; 
             }
 
             if (postsToAdd.length < fetchBatchSize) {
-                hasMore = false; // Si el batch es menor, no hay más para traer
+                hasMore = false;
             }
         }
 
@@ -76,7 +73,7 @@ exports.handler = async (event, context) => {
             body: JSON.stringify({
                 username: username,
                 posts: posts, 
-                reblogs: [], // Como getDiscussionsByAuthorBeforeDateAsync no devuelve reblogs
+                reblogs: [], 
                 hasMore: hasMore,
                 next_start_permlink: posts.length > 0 ? posts[posts.length - 1].permlink : null,
             }),
