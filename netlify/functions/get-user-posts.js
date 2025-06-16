@@ -70,7 +70,8 @@ exports.handler = async (event, context) => {
                 }
 
                 // Construcción segura de la URL usando post.author y post.permlink
-                const fullUrl = `https://hive.blog/@<span class="math-inline">\{post\.author\}/</span>{post.permlink}`;
+                const fullUrl = `https://hive.blog/@${post.author}/${post.permlink}`;
+                console.log(`URL construida para el post ${post.permlink}: ${fullUrl}`); // Este log nos mostrará la URL correcta en Netlify
 
                 const postObj = {
                     id: post.id,
