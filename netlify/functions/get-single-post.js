@@ -2,6 +2,8 @@
 const hive = require('@hiveio/hive-js');
 
 exports.handler = async (event, context) => {
+    // *** IMPORTANTE: REEMPLAZA 'TU_DOMINIO_PERSONALIZADO.COM' CON TU DOMINIO REAL ***
+    const BASE_BLOG_URL = 'https://dreamy-baklava-d17cb6.netlify.app';
     // Asegurarse de que el websocket está configurado
     hive.config.set('websocket', 'https://api.hive.blog');
     console.log("Configuración de Hive.js: websocket a https://api.hive.blog");
