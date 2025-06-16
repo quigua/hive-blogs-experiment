@@ -5,95 +5,59 @@ exports.handler = async (event, context) => {
     hive.config.set('websocket', 'https://api.hive.blog');
 
     const username = event.queryStringParameters.username || 'quigua';
-    const limit = parseInt(event.queryStringParameters.limit) || 20;
-    let startAuthor = event.queryStringParameters.start_author || null;
-    let startPermlink = event.queryStringParameters.start_permlink || null;
+    const limit = parseInt(event.queryStringParameters.limit) || 20; // Límite de publicaciones a retornar
+    const startPermlink = event.queryStringParameters.start_permlink || null;
+    const startAuthor = event.queryStringParameters.start_author || null; // No usado directamente con este método pero se mantiene para consistencia
 
-    const allUserPosts = [];
-    const reblogs = [];
-    let fetchedOriginalPostsCount = 0;
-    const fetchBatchSize = 100;
+    const posts = [];
     let hasMore = true;
-    let totalItemsFetched = 0; // Para controlar el total de ítems de la API
+    let count = 0;
+    const fetchBatchSize = 100; // Cuántas publicaciones pedir en cada llamada
+    let lastPermlink = startPermlink; // Usar para paginación
 
     try {
-        while (hasMore && fetchedOriginalPostsCount < limit) {
-            const query = {
-                tag: username,
-                limit: fetchBatchSize,
-            };
+        // Este método busca discusiones (posts) por autor ANTES de una fecha/permlink dado.
+        // Es más adecuado para obtener publicaciones originales de un autor.
+        while (hasMore && count < limit) {
+            const discussions = await hive.api.getDiscussionsByAuthorBeforeDateAsync(
+                username,
+                lastPermlink, // Si es null, empieza desde las más recientes
+                '', // fecha: vacío para que use el permlink como punto de inicio
+                fetchBatchSize
+            );
 
-            // Si estamos paginando, ajusta los parámetros de inicio
-            if (startAuthor && startPermlink) {
-                query.start_author = startAuthor;
-                query.start_permlink = startPermlink;
-            }
-
-            const postsBatch = await hive.api.getDiscussionsByBlogAsync(query);
-
-            // Si es la primera llamada y se especifica start_permlink/start_author,
-            // la API incluye el elemento de inicio en el resultado. Lo eliminamos.
-            // También si subsiguientes llamadas traen el mismo primer post.
-            if (postsBatch.length > 0 && startAuthor && startPermlink && postsBatch[0].author === startAuthor && postsBatch[0].permlink === startPermlink) {
-                postsBatch.shift();
-            }
-
-            if (postsBatch.length === 0) {
-                hasMore = false; // No hay más publicaciones
+            // Si no hay discusiones, o solo trajo el elemento de inicio de la iteración anterior,
+            // significa que no hay más publicaciones.
+            if (discussions.length === 0 || (discussions.length === 1 && discussions[0].permlink === lastPermlink)) {
+                hasMore = false;
                 break;
             }
 
-            for (const post of postsBatch) {
-                totalItemsFetched++; // Contar todos los items que trae la API
+            // Filtrar el duplicado si estamos en paginación
+            const postsToAdd = lastPermlink ? discussions.slice(1) : discussions;
 
-                // Verificar si es una publicación original del usuario o un reblog
-                // Un reblog en getDiscussionsByBlogAsync tiene post.author diferente a 'username'
-                // pero aparece en el feed de blog de 'username'.
-                if (post.author === username) {
-                    // Es una publicación original del usuario
-                    allUserPosts.push({
+            for (const post of postsToAdd) {
+                if (count < limit) {
+                    posts.push({
                         id: post.id,
                         author: post.author,
                         permlink: post.permlink,
                         title: post.title,
                         summary: post.body ? post.body.substring(0, 200) + (post.body.length > 200 ? '...' : '') : '',
                         created: post.created,
-                        url: `https://hive.blog/@<span class="math-inline">\{post\.author\}/</span>{post.permlink}`, // URL correcta
+                        url: `https://hive.blog/@<span class="math-inline">\{post\.author\}/</span>{post.permlink}`, // URL CORRECTA
                         body: post.body // Incluir el cuerpo completo
                     });
-                    fetchedOriginalPostsCount++;
+                    count++;
                 } else {
-                    // Es un reblog
-                    reblogs.push({
-                        id: post.id,
-                        author: post.author,
-                        permlink: post.permlink,
-                        title: post.title,
-                        summary: post.body ? post.body.substring(0, 200) + (post.body.length > 200 ? '...' : '') : '',
-                        created: post.created,
-                        url: `https://hive.blog/@<span class="math-inline">\{post\.author\}/</span>{post.permlink}`, // URL correcta
-                        reblogged_by: username // Quien hizo el reblog
-                    });
-                }
-
-                if (fetchedOriginalPostsCount >= limit) {
-                    break; // Hemos alcanzado el límite de publicaciones originales
+                    break;
                 }
             }
 
-            // Actualizar los parámetros de inicio para la próxima iteración
-            // Asegurarse de que no estamos en un bucle infinito si el último batch está vacío o es el mismo
-            if (postsBatch.length > 0) {
-                const lastPostInBatch = postsBatch[postsBatch.length - 1];
-                startAuthor = lastPostInBatch.author;
-                startPermlink = lastPostInBatch.permlink;
-            } else {
-                hasMore = false; // Si el batch está vacío, no hay más posts
-            }
-
-            // Si el número de items fetched es menor que el tamaño del batch, no hay más para traer.
-            if (postsBatch.length < fetchBatchSize) {
+            if (postsToAdd.length < fetchBatchSize || count >= limit) {
                 hasMore = false;
+            } else {
+                lastPermlink = postsToAdd[postsToAdd.length - 1].permlink;
             }
         }
 
@@ -101,11 +65,10 @@ exports.handler = async (event, context) => {
             statusCode: 200,
             body: JSON.stringify({
                 username: username,
-                posts: allUserPosts, // Solo publicaciones originales del usuario
-                reblogs: reblogs,   // Todos los reblogs encontrados
-                hasMore: hasMore,   // Indica si podría haber más publicaciones originales disponibles
-                next_start_author: allUserPosts.length > 0 ? allUserPosts[allUserPosts.length - 1].author : null,
-                next_start_permlink: allUserPosts.length > 0 ? allUserPosts[allUserPosts.length - 1].permlink : null,
+                posts: posts, // Esto ahora solo contendrá publicaciones originales
+                reblogs: [], // No podemos obtener reblogs con este método directamente, se dejará vacío por ahora
+                hasMore: hasMore,
+                next_start_permlink: posts.length > 0 ? posts[posts.length - 1].permlink : null,
             }),
         };
     } catch (error) {
