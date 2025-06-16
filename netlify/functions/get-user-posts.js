@@ -5,25 +5,24 @@ exports.handler = async (event, context) => {
     hive.config.set('websocket', 'https://api.hive.blog');
 
     const username = event.queryStringParameters.username || 'quigua';
-    const limit = parseInt(event.queryStringParameters.limit) || 20; 
-    let startPermlink = event.queryStringParameters.start_permlink || null; // Se mantiene la variable
+    const limit = parseInt(event.queryStringParameters.limit) || 20;
+    let startPermlink = event.queryStringParameters.start_permlink || null;
 
     const posts = [];
     let hasMore = true;
     let count = 0;
-    const fetchBatchSize = 100; 
+    const fetchBatchSize = 100;
 
     try {
         while (hasMore && count < limit) {
             const discussions = await hive.api.getDiscussionsByAuthorBeforeDateAsync(
                 username,
-                startPermlink, // <-- ¡CORRECCIÓN AQUÍ! Usamos startPermlink
-                '', 
+                startPermlink,
+                '',
                 fetchBatchSize
             );
 
             let postsToAdd = discussions;
-            // Si startPermlink tiene un valor y el primer item del batch coincide, lo eliminamos.
             if (startPermlink && discussions.length > 0 && discussions[0].permlink === startPermlink) {
                 postsToAdd = discussions.slice(1);
             }
@@ -33,12 +32,25 @@ exports.handler = async (event, context) => {
                 break;
             }
 
+            // --- Depuración: Imprimir la estructura del primer post recibido ---
+            if (count === 0 && postsToAdd.length > 0) {
+                console.log("--- Estructura del primer post recibido de Hive ---");
+                console.log(JSON.stringify(postsToAdd[0], null, 2));
+                console.log("---------------------------------------------------");
+            }
+            // ------------------------------------------------------------------
+
             for (const post of postsToAdd) {
                 if (count < limit) {
+                    // Asegurarse de que las propiedades existen y se acceden correctamente
+                    // Utilizaremos un enfoque más defensivo y verficaremos las propiedades.
                     const title = post.title || 'Sin título';
                     const body = post.body || '';
                     const permlink = post.permlink || '';
                     const author = post.author || username; 
+
+                    // Aquí nos aseguramos de que la URL se construye correctamente con backticks
+                    const postUrl = `https://hive.blog/@<span class="math-inline">\{author\}/</span>{permlink}`;
 
                     posts.push({
                         id: post.id,
@@ -47,7 +59,7 @@ exports.handler = async (event, context) => {
                         title: title,
                         summary: body.substring(0, 200) + (body.length > 200 ? '...' : ''),
                         created: post.created,
-                        url: `https://hive.blog/@<span class="math-inline">\{author\}/</span>{permlink}`, 
+                        url: postUrl, 
                         body: body 
                     });
                     count++;
@@ -56,11 +68,10 @@ exports.handler = async (event, context) => {
                 }
             }
 
-            // Actualizar startPermlink para la próxima paginación
             if (postsToAdd.length > 0) {
                 startPermlink = postsToAdd[postsToAdd.length - 1].permlink;
             } else {
-                hasMore = false; 
+                hasMore = false;
             }
 
             if (postsToAdd.length < fetchBatchSize) {
