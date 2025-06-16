@@ -1,68 +1,213 @@
 ---
-import Layout from '../layouts/Layout.astro';
-import Welcome from '../components/Welcome.astro';
-import HiveBlockInfo from '../components/HiveBlockInfo.jsx';
-import UserPosts from '../components/UserPosts.jsx'; // ¡Importa tu nuevo componente!
+// src/pages/index.astro
+// Este es el "frontmatter" de Astro, aquí va el JavaScript de servidor (o que se ejecuta al construir)
+// No necesitamos importar 'hive-js' aquí directamente para las funciones Netlify.
+
+// Define la URL base de tus funciones Netlify
+const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
+const USERNAME_TO_FETCH = 'quigua'; // El usuario de Hive del que quieres obtener los posts
+const POSTS_PER_PAGE = 20; // Coincidir con el límite de tu función get-user-posts
+
+// Función para obtener los posts del usuario (se ejecutará en el servidor al construir/renderizar)
+// Opcional: Podrías hacer esta llamada desde el cliente si quieres paginación infinita en el navegador
+let initialPosts = [];
+let hasMorePosts = false;
+let nextStartAuthor = null;
+let nextStartPermlink = null;
+
+try {
+    const response = await fetch(`<span class="math-inline">\{FUNCTIONS\_BASE\_URL\}/get\-user\-posts?username\=</span>{USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}`);
+    const data = await response.json();
+
+    if (data.error) {
+        console.error("Error al cargar posts iniciales:", data.error, data.details);
+    } else {
+        initialPosts = data.posts;
+        hasMorePosts = data.hasMore;
+        nextStartAuthor = data.nextPage?.startAuthor || null; // Usa optional chaining por si nextPage no existe
+        nextStartPermlink = data.nextPage?.startPermlink || null;
+    }
+} catch (error) {
+    console.error("Error al conectar con la función Netlify para posts iniciales:", error);
+}
 ---
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mi Blog de Hive - Astro</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; color: #333;}
+        h1 { color: #007bff; text-align: center;}
+        #posts-list { margin: 20px auto; padding: 20px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 800px;}
+        #posts-list h2 { margin-top: 0; color: #555;}
+        #posts-container { list-style: none; padding: 0;}
+        #posts-container li { margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px;}
+        #posts-container li:last-child { border-bottom: none;}
+        .post-title {
+            text-decoration: none;
+            color: #007bff;
+            font-weight: bold;
+            font-size: 1.2em;
+            cursor: pointer; /* Indicar que es clickeable */
+        }
+        .post-title:hover { text-decoration: underline;}
+        .post-meta { font-size: 0.9em; color: #777;}
+        .load-more-button {
+            display: block;
+            width: fit-content;
+            margin: 20px auto 0;
+            padding: 10px 20px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+        }
+        .load-more-button:hover { background-color: #218838;}
+        /* Ocultar el detalle del post por defecto en esta página, ya que tendrá su propia página */
+        #post-detail { display: none; }
+    </style>
+    <script>import { marked } from 'marked';// ... tu código que usa marked.parse()</script>
+    
+</head>
+<body>
 
-<Layout title="Welcome to Astro.">
-  <main>
-    <Welcome />
-    </p>
+    <h1>Posts de Hive de @{USERNAME_TO_FETCH}</h1>
 
-    <section class="prose">
-      <HiveBlockInfo client:load /> 
-    </section>
+    <div id="posts-list">
+        <h2>Últimos Posts</h2>
+        <ul id="posts-container">
+            {initialPosts.length === 0 ? (
+                <li>No se encontraron posts o hubo un error al cargar.</li>
+            ) : (
+                initialPosts.map(post => (
+                    <li>
+                        <a href={`/post-detail?author=<span class="math-inline">\{post\.author\}&permlink\=</span>{post.permlink}`} class="post-title">
+                            {post.title}
+                        </a>
+                        <p class="post-meta">Publicado por {post.author} el {new Date(post.created).toLocaleDateString()}</p>
+                    </li>
+                ))
+            )}
+        </ul>
+        {hasMorePosts && <button id="load-more-button" class="load-more-button">Cargar más</button>}
+    </div>
 
-    {/* Aquí insertamos el componente para las publicaciones del usuario */}
-    <section class="prose">
-      <UserPosts client:load username="quigua" /> {/* Pasamos el nombre de usuario "quigua" */}
-    </section>
+    <script is:inline>
+        // JavaScript que se ejecuta en el navegador (cliente)
+        const FUNCTIONS_BASE_URL_CLIENT = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
+        const USERNAME_TO_FETCH_CLIENT = 'quigua';
+        const POSTS_PER_PAGE_CLIENT = 20;
 
-  </main>
-</Layout>
+        let currentStartAuthor = "---nextStartAuthor---"; // Placeholder que Astro reemplazará
+        let currentStartPermlink = "---nextStartPermlink---"; // Placeholder
 
-<style>
-  main {
-    margin: auto;
-    padding: 1.5rem;
-    max-width: 60ch;
-  }
-  h1 {
-    font-size: 3rem;
-    font-weight: 800;
-    margin: 0;
-  }
-  .text-gradient {
-    font-weight: 900;
-    background-image: var(--accent-gradient);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-size: 400%;
-    animation: gradient 15s ease infinite;
-  }
-  .instructions {
-    margin-bottom: 2rem;
-    border: 1px solid rgba(var(--accent-light), 25%);
-    background-color: rgba(var(--accent-light), 12%);
-    padding: 1.5rem;
-    border-radius: 8px;
-  }
-  .instructions code {
-    font-size: 0.8em;
-    font-weight: bold;
-    background-color: rgba(var(--accent-light), 26%);
-    color: rgb(var(--accent-dark));
-    border-radius: 4px;
-    padding: 0.3em 0.4em;
-  }
-  .instructions strong {
-    color: rgb(var(--accent-dark));
-  }
-  .link-card-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(24ch, 1fr));
-    gap: 1rem;
-    padding: 0;
-  }
-</style>
+        const postsContainerClient = document.getElementById('posts-container');
+        const loadMoreButtonClient = document.getElementById('load-more-button');
+
+        // Reemplazar los placeholders con los valores reales del servidor
+        // Esto es necesario porque el JS inline no ve las variables del frontmatter directamente
+        currentStartAuthor = currentStartAuthor === "---nextStartAuthor---" ? null : currentStartAuthor;
+        currentStartPermlink = currentStartPermlink === "---nextStartPermlink---" ? null : currentStartPermlink;
+
+        // Función para cargar más posts desde el cliente
+        async function fetchMorePosts() {
+            loadMoreButtonClient.textContent = 'Cargando...';
+            loadMoreButtonClient.disabled = true;
+
+            let url = `<span class="math-inline">\{FUNCTIONS\_BASE\_URL\_CLIENT\}/get\-user\-posts?username\=</span>{USERNAME_TO_FETCH_CLIENT}&limit=${POSTS_PER_PAGE_CLIENT}`;
+            if (currentStartAuthor && currentStartPermlink) {
+                url += `&startAuthor=<span class="math-inline">\{currentStartAuthor\}&startPermlink\=</span>{currentStartPermlink}`;
+            }
+
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.error) {
+                    console.error("Error al cargar más posts:", data.error, data.details);
+                    loadMoreButtonClient.textContent = 'Error al cargar';
+                    return;
+                }
+
+                if (data.posts.length === 0) {
+                    loadMoreButtonClient.style.display = 'none'; // No hay más posts
+                    return;
+                }
+
+                data.posts.forEach(post => {
+                    const li = document.createElement('li');
+                    const a = document.createElement('a');
+                    a.href = `/post-detail?author=<span class="math-inline">\{post\.author\}&permlink\=</span>{post.permlink}`; // Enlace directo a la página de detalle
+                    a.className = 'post-title';
+                    a.textContent = post.title;
+
+                    const meta = document.createElement('p');
+                    meta.className = 'post-meta';
+                    meta.textContent = `Publicado por ${post.author} el ${new Date(post.created).toLocaleDateString()}`;
+
+                    li.appendChild(a);
+                    li.appendChild(meta);
+                    postsContainerClient.appendChild(li);
+                });
+
+                if (data.hasMore) {
+                    currentStartAuthor = data.nextPage.startAuthor;
+                    currentStartPermlink = data.nextPage.startPermlink;
+                    loadMoreButtonClient.textContent = 'Cargar más';
+                    loadMoreButtonClient.disabled = false;
+                } else {
+                    loadMoreButtonClient.style.display = 'none';
+                }
+
+            } catch (error) {
+                console.error("Error fetching more posts:", error);
+                loadMoreButtonClient.textContent = 'Error de conexión';
+                loadMoreButtonClient.disabled = false;
+            }
+        }
+
+        if (loadMoreButtonClient) { // Asegurarse de que el botón existe
+            loadMoreButtonClient.addEventListener('click', fetchMorePosts);
+        }
+
+        // Para que Astro inyecte los valores de nextStartAuthor y nextStartPermlink del servidor
+        // Tendremos que usar una forma de pasar variables del frontmatter a is:inline scripts
+        // Para simplificar, haremos una llamada inicial solo si no hay posts cargados,
+        // o si hasMorePosts es true (siempre que el botón esté visible).
+        // Astro lo renderizará inicialmente, y luego el JS del cliente manejará el resto.
+        // Para pasar variables del frontmatter (lado del servidor) a un script con `is:inline` (lado del cliente),
+        // la forma más sencilla es inyectarlas directamente en el HTML como atributos de datos o variables globales.
+        // Por simplicidad en este ejemplo, he usado placeholders que deberías reemplazar manualmente
+        // o usar un truco como: <script is:inline> const x = '{someAstroVar}'; </script>
+
+        // Para que este ejemplo funcione, necesitamos que nextStartAuthor y nextStartPermlink
+        // sean pasados desde el frontmatter a este script inlined.
+        // Una forma común es así:
+        document.addEventListener('DOMContentLoaded', () => {
+            const initialDataScript = document.createElement('script');
+            initialDataScript.type = 'application/json';
+            initialDataScript.id = 'initial-posts-data';
+            initialDataScript.textContent = JSON.stringify({
+                nextStartAuthor: nextStartAuthor,
+                nextStartPermlink: nextStartPermlink,
+                hasMore: hasMorePosts
+            });
+            document.body.appendChild(initialDataScript);
+
+            const dataFromAstro = JSON.parse(document.getElementById('initial-posts-data').textContent);
+            currentStartAuthor = dataFromAstro.nextStartAuthor;
+            currentStartPermlink = dataFromAstro.nextStartPermlink;
+
+            if (!dataFromAstro.hasMore && loadMoreButtonClient) {
+                 loadMoreButtonClient.style.display = 'none';
+            }
+        });
+
+
+    </script>
+</body>
+</html>

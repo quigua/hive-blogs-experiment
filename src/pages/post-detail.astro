@@ -1,0 +1,115 @@
+---
+// src/pages/post-detail.astro
+// Este script se ejecuta en el servidor (al construir/solicitar la página)
+
+import { url } from "astro/url";
+
+// Define la URL base de tus funciones Netlify
+const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
+
+// Obtener los parámetros de la URL (query parameters)
+const urlParams = Astro.url.searchParams;
+const author = urlParams.get('author');
+const permlink = urlParams.get('permlink');
+
+let postDetail = null;
+let errorMessage = null;
+
+if (author && permlink) {
+    try {
+        const response = await fetch(`<span class="math-inline">\{FUNCTIONS\_BASE\_URL\}/get\-single\-post?author\=</span>{author}&permlink=${permlink}`);
+        const data = await response.json();
+
+        if (data.error) {
+            errorMessage = data.error;
+            console.error("Error al cargar el detalle del post:", data.details);
+        } else {
+            postDetail = data;
+        }
+    } catch (error) {
+        errorMessage = "Error de conexión al cargar el post.";
+        console.error("Error fetching single post:", error);
+    }
+} else {
+    errorMessage = "Faltan los parámetros 'author' o 'permlink' para ver el post.";
+}
+---
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{postDetail ? postDetail.title : 'Post no encontrado'} - Mi Blog de Hive</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; color: #333;}
+        .post-content-wrapper { margin: 20px auto; padding: 20px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 800px;}
+        h1 { color: #007bff; margin-bottom: 10px;}
+        .post-meta { font-size: 0.9em; color: #777; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 10px;}
+        .post-body { line-height: 1.7; color: #444;}
+        .post-body img { max-width: 100%; height: auto; display: block; margin: 15px 0;}
+        .back-button {
+            display: inline-block;
+            margin-bottom: 20px;
+            padding: 10px 15px;
+            background-color: #6c757d;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+        }
+        .back-button:hover { background-color: #5a6268;}
+    </style>
+    <script>import { marked } from 'marked';// ... tu código que usa marked.parse()</script>
+     
+</head>
+<body>
+
+    <div class="post-content-wrapper">
+        <a href="/" class="back-button">← Volver a la lista</a>
+
+        {errorMessage ? (
+            <div>
+                <h1>Error al cargar el post</h1>
+                <p>{errorMessage}</p>
+            </div>
+        ) : postDetail ? (
+            <>
+                <h1>{postDetail.title}</h1>
+                <p class="post-meta">Publicado por {postDetail.author} el {new Date(postDetail.created).toLocaleDateString()}</p>
+                <div id="post-body-content" class="post-body">
+                    </div>
+                <p><strong>Ver en Hive.blog:</strong> <a href={postDetail.url} target="_blank">Enlace Original</a></p>
+            </>
+        ) : (
+            <p>Cargando post...</p>
+        )}
+    </div>
+
+    <script is:inline>
+            import { marked } from 'marked';
+        // Este script se ejecuta en el cliente después de que la página ha sido renderizada por Astro
+        document.addEventListener('DOMContentLoaded', () => {
+            const postBodyContentDiv = document.getElementById('post-body-content');
+            if (postBodyContentDiv) {
+                // Astro pasa el body como una string. marked.parse la convierte.
+                const rawBody = "---bodyPlaceholder---"; // Usaremos un placeholder para el cuerpo
+                // Reemplazar el placeholder con el valor real del servidor (del frontmatter)
+                const actualBody = {JSON.stringify(postDetail?.body || '')}; // Inyectar directamente el body
+
+                try {
+                    // Asegurarse de que Marked.js está cargado y disponible
+                    if (typeof marked !== 'undefined') {
+                        postBodyContentDiv.innerHTML = marked.parse(actualBody.replace(/^"|"$/g, '')); // Quitar comillas extra si hay
+                    } else {
+                        // Fallback si marked.js no carga por alguna razón
+                        postBodyContentDiv.innerHTML = actualBody.replace(/\n/g, '<br>').replace(/^"|"$/g, '');
+                        console.warn("Marked.js no está disponible. Mostrando Markdown básico.");
+                    }
+                } catch (e) {
+                    console.error("Error al parsear Markdown:", e);
+                    postBodyContentDiv.innerHTML = "<p>Error al mostrar el contenido del post.</p>";
+                }
+            }
+        });
+    </script>
+</body>
+</html>
