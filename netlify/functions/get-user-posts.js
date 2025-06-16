@@ -73,7 +73,7 @@ exports.handler = async (event, context) => {
 
                 // Construcción segura de la URL usando post.author y post.permlink
                 const fullUrl = `${BASE_BLOG_URL}/@${post.author}/${post.permlink}`;
-                console.log(`URL construida para el post ${postData.permlink}: ${fullUrl}`);
+                console.log(`URL construida para el post ${post.permlink}: ${fullUrl}`);
                 
                 
 
