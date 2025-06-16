@@ -3,11 +3,9 @@ const hive = require('@hiveio/hive-js');
 
 exports.handler = async (event, context) => {
     try {
-        // Establece un nodo RPC de Hive. Puedes cambiarlo a uno más cercano o de tu preferencia.
-        // La línea original estaba causando el error "Options is not defined".
-        // La forma correcta de establecer el nodo es llamando a la función setOptions directamente en hive.config.
-        // También se asegura de que el nodo utilizado en la respuesta sea el configurado.
-        hive.api.setOptions({ url: 'https://api.hive.blog' }); // ¡ESTA ES LA CORRECCIÓN!
+        // Establece el nodo RPC de Hive directamente en la configuración
+        // La propiedad correcta es 'url' en hive.config
+        hive.config.set('websocket', 'https://api.hive.blog'); 
 
         // Ejemplo: Obtener el número del bloque más reciente
         const dynamicGlobalProperties = await hive.api.getDynamicGlobalPropertiesAsync();
@@ -18,7 +16,7 @@ exports.handler = async (event, context) => {
             body: JSON.stringify({
                 message: "Información de la blockchain de Hive obtenida con éxito.",
                 headBlockNumber: headBlockNumber,
-                nodeUsed: hive.api.options.url // Muestra qué nodo se usó (esto ya estaba bien)
+                nodeUsed: hive.config.get('websocket') // Muestra qué nodo se usó desde la configuración
             }),
         };
     } catch (error) {
