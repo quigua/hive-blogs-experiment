@@ -6,75 +6,86 @@ exports.handler = async (event, context) => {
 
     const username = event.queryStringParameters.username || 'quigua';
     const limit = parseInt(event.queryStringParameters.limit) || 20;
+    let startAuthor = event.queryStringParameters.start_author || null;
     let startPermlink = event.queryStringParameters.start_permlink || null;
 
-    const posts = [];
+    const allUserPosts = [];
+    const reblogs = [];
     let hasMore = true;
-    let count = 0;
     const fetchBatchSize = 100;
 
     try {
-        while (hasMore && count < limit) {
-            const discussions = await hive.api.getDiscussionsByAuthorBeforeDateAsync(
-                username,
-                startPermlink,
-                '',
-                fetchBatchSize
-            );
+        while (hasMore && allUserPosts.length < limit) {
+            const query = {
+                tag: username,
+                limit: fetchBatchSize,
+            };
 
-            let postsToAdd = discussions;
-            if (startPermlink && discussions.length > 0 && discussions[0].permlink === startPermlink) {
-                postsToAdd = discussions.slice(1);
+            if (startAuthor && startPermlink) {
+                query.start_author = startAuthor;
+                query.start_permlink = startPermlink;
             }
 
-            if (postsToAdd.length === 0) {
+            const postsBatch = await hive.api.getDiscussionsByBlogAsync(query);
+
+            // Remover el duplicado de paginación si existe
+            if (postsBatch.length > 0 && startAuthor && startPermlink && 
+                postsBatch[0].author === startAuthor && postsBatch[0].permlink === startPermlink) {
+                postsBatch.shift(); 
+            }
+
+            if (postsBatch.length === 0) {
                 hasMore = false;
                 break;
             }
 
-            // --- Depuración: Imprimir la estructura del primer post recibido ---
-            if (count === 0 && postsToAdd.length > 0) {
-                console.log("--- Estructura del primer post recibido de Hive ---");
-                console.log(JSON.stringify(postsToAdd[0], null, 2));
-                console.log("---------------------------------------------------");
-            }
-            // ------------------------------------------------------------------
+            for (const post of postsBatch) {
+                // Validar la existencia de propiedades clave
+                if (!post.author || !post.permlink || !post.title || !post.body || !post.created) {
+                    console.warn(`Post incompleto o malformado, saltando: ${JSON.stringify(post)}`);
+                    continue; 
+                }
 
-            for (const post of postsToAdd) {
-                if (count < limit) {
-                    // Asegurarse de que las propiedades existen y se acceden correctamente
-                    // Utilizaremos un enfoque más defensivo y verficaremos las propiedades.
-                    const title = post.title || 'Sin título';
-                    const body = post.body || '';
-                    const permlink = post.permlink || '';
-                    const author = post.author || username; 
+                // Construcción segura de la URL usando post.author y post.permlink
+                const fullUrl = `https://hive.blog/@<span class="math-inline">\{post\.author\}/</span>{post.permlink}`;
 
-                    // Aquí nos aseguramos de que la URL se construye correctamente con backticks
-                    const postUrl = `https://hive.blog/@<span class="math-inline">\{author\}/</span>{permlink}`;
+                const postObj = {
+                    id: post.id,
+                    author: post.author,
+                    permlink: post.permlink,
+                    title: post.title,
+                    summary: post.body.substring(0, 200) + (post.body.length > 200 ? '...' : ''),
+                    created: post.created,
+                    url: fullUrl, // Usamos la URL completa que acabamos de construir
+                    body: post.body 
+                };
 
-                    posts.push({
-                        id: post.id,
-                        author: author,
-                        permlink: permlink,
-                        title: title,
-                        summary: body.substring(0, 200) + (body.length > 200 ? '...' : ''),
-                        created: post.created,
-                        url: postUrl, 
-                        body: body 
-                    });
-                    count++;
+                if (post.author === username) {
+                    // Es una publicación original del usuario
+                    allUserPosts.push(postObj);
                 } else {
-                    break;
+                    // Es un reblog
+                    reblogs.push({
+                        ...postObj,
+                        reblogged_by: username 
+                    });
+                }
+
+                if (allUserPosts.length >= limit) {
+                    break; 
                 }
             }
 
-            if (postsToAdd.length > 0) {
-                startPermlink = postsToAdd[postsToAdd.length - 1].permlink;
+            // Actualizar los parámetros de paginación
+            if (postsBatch.length > 0) {
+                const lastPostInBatch = postsBatch[postsBatch.length - 1];
+                startAuthor = lastPostInBatch.author;
+                startPermlink = lastPostInBatch.permlink;
             } else {
                 hasMore = false;
             }
 
-            if (postsToAdd.length < fetchBatchSize) {
+            if (postsBatch.length < fetchBatchSize) {
                 hasMore = false;
             }
         }
@@ -83,10 +94,11 @@ exports.handler = async (event, context) => {
             statusCode: 200,
             body: JSON.stringify({
                 username: username,
-                posts: posts, 
-                reblogs: [], 
+                posts: allUserPosts, 
+                reblogs: reblogs,   
                 hasMore: hasMore,
-                next_start_permlink: posts.length > 0 ? posts[posts.length - 1].permlink : null,
+                next_start_author: allUserPosts.length > 0 ? allUserPosts[allUserPosts.length - 1].author : null,
+                next_start_permlink: allUserPosts.length > 0 ? allUserPosts[allUserPosts.length - 1].permlink : null,
             }),
         };
     } catch (error) {
