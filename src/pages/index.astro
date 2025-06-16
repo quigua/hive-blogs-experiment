@@ -1,11 +1,63 @@
 ---
-import Welcome from '../components/Welcome.astro';
 import Layout from '../layouts/Layout.astro';
-
-// Welcome to Astro! Wondering what to do next? Check out the Astro documentation at https://docs.astro.build
-// Don't want to use any of this? Delete everything in this file, the `assets`, `components`, and `layouts` directories, and start fresh.
+import Welcome from '../components/Welcome.astro';
+import HiveBlockInfo from '../components/HiveBlockInfo.jsx'; // Importa tu componente de React
 ---
 
-<Layout>
-	<Welcome />
+<Layout title="Welcome to Astro.">
+  <main>
+    <Welcome />
+    </p>
+
+    <section class="prose">
+      {/* Aquí es donde insertamos el componente de React. */}
+      {/* La directiva `client:load` asegura que el componente se cargue y ejecute en el navegador. */}
+      <HiveBlockInfo client:load /> 
+    </section>
+  </main>
 </Layout>
+
+<style>
+  main {
+    margin: auto;
+    padding: 1.5rem;
+    max-width: 60ch;
+  }
+  h1 {
+    font-size: 3rem;
+    font-weight: 800;
+    margin: 0;
+  }
+  .text-gradient {
+    font-weight: 900;
+    background-image: var(--accent-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-size: 400%;
+    animation: gradient 15s ease infinite;
+  }
+  .instructions {
+    margin-bottom: 2rem;
+    border: 1px solid rgba(var(--accent-light), 25%);
+    background-color: rgba(var(--accent-light), 12%);
+    padding: 1.5rem;
+    border-radius: 8px;
+  }
+  .instructions code {
+    font-size: 0.8em;
+    font-weight: bold;
+    background-color: rgba(var(--accent-light), 26%);
+    color: rgb(var(--accent-dark));
+    border-radius: 4px;
+    padding: 0.3em 0.4em;
+  }
+  .instructions strong {
+    color: rgb(var(--accent-dark));
+  }
+  .link-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(24ch, 1fr));
+    gap: 1rem;
+    padding: 0;
+  }
+</style>
