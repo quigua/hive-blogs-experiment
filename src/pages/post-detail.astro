@@ -17,7 +17,7 @@ let errorMessage = null;
 
 if (author && permlink) {
     try {
-        const response = await fetch(`${FUNCTIONS_BASE_URL}/get-user-posts?username=${USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}`);
+        const response = await fetch(`${FUNCTIONS_BASE_URL}/get-single-post?username=${USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}`);
         const data = await response.json();
 
         if (data.error) {
@@ -85,7 +85,7 @@ if (author && permlink) {
     </div>
 
     <script is:inline>
-            import { marked } from 'marked';
+         
         // Este script se ejecuta en el cliente después de que la página ha sido renderizada por Astro
         document.addEventListener('DOMContentLoaded', () => {
             const postBodyContentDiv = document.getElementById('post-body-content');
