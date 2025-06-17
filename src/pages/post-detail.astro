@@ -17,7 +17,7 @@ let errorMessage = null;
 
 if (author && permlink) {
     try {
-        const response = await fetch(`${FUNCTIONS_BASE_URL}/get-single-post?username=${USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}`);
+        const response = await fetch(`{FUNCTIONS_BASE_URL}/get-single-post?author=${author}&permlink=${permlink}`);
         const data = await response.json();
 
         if (data.error) {
@@ -58,7 +58,7 @@ if (author && permlink) {
         }
         .back-button:hover { background-color: #5a6268;}
     </style>
-    <script>import { marked } from 'marked';// ... tu código que usa marked.parse()</script>
+    
      
 </head>
 <body>
