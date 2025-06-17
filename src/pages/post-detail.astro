@@ -1,43 +1,10 @@
 ---
 // src/pages/post-detail.astro
-// Este script se ejecuta en el servidor (al construir/solicitar la página)
-
 
 // Define la URL base de tus funciones Netlify
 const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
-
-// Obtener los parámetros de la URL (query parameters)
-const urlParams = Astro.url.searchParams;
-const author = urlParams.get('author');
-const permlink = urlParams.get('permlink');
-
-// ** NUEVOS CONSOLE.LOG PARA DEPURACIÓN **
-console.log("DEBUG: author leído de la URL:", author);
-console.log("DEBUG: permlink leído de la URL:", permlink);
-// ** FIN NUEVOS CONSOLE.LOG **
-
-let postDetail = null;
-let errorMessage = null;
-
-if (author && permlink) {
-    try {
-        const response = await fetch(`{FUNCTIONS_BASE_URL}/get-single-post?author=${author}&permlink=${permlink}`);
-        const data = await response.json();
-
-        if (data.error) {
-            errorMessage = data.error;
-            console.error("Error al cargar el detalle del post:", data.details);
-        } else {
-            postDetail = data;
-        }
-    } catch (error) {
-        errorMessage = "Error de conexión al cargar el post.";
-        console.error("Error fetching single post:", error);
-    }
-} else {
-    errorMessage = "Faltan los parámetros 'author' o 'permlink' para ver el post.";
-}
 ---
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -65,53 +32,109 @@ if (author && permlink) {
     
      
 </head>
-<body>
+<body data-astro-cid-n5uiyq6w>
+    <div class="post-content-wrapper" data-astro-cid-n5uiyq6w>
+        <a href="/" class="back-button" data-astro-cid-n5uiyq6w>← Volver a la lista</a>
 
-    <div class="post-content-wrapper">
-        <a href="/" class="back-button">← Volver a la lista</a>
-
-        {errorMessage ? (
-            <div>
-                <h1>Error al cargar el post</h1>
-                <p>{errorMessage}</p>
-            </div>
-        ) : postDetail ? (
-            <>
-                <h1>{postDetail.title}</h1>
-                <p class="post-meta">Publicado por {postDetail.author} el {new Date(postDetail.created).toLocaleDateString()}</p>
-                <div id="post-body-content" class="post-body">
-                    </div>
-                <p><strong>Ver en Hive.blog:</strong> <a href={postDetail.url} target="_blank">Enlace Original</a></p>
-            </>
-        ) : (
+        <div id="error-message-container" data-astro-cid-n5uiyq6w>
             <p>Cargando post...</p>
-        )}
+        </div>
+
+        <div id="post-detail-container" style="display: none;" data-astro-cid-n5uiyq6w>
+            <h1 id="post-title" data-astro-cid-n5uiyq6w></h1>
+            <p id="post-meta" class="post-meta" data-astro-cid-n5uiyq6w></p>
+            <div id="post-body-content" class="post-body" data-astro-cid-n5uiyq6w></div>
+            <p><strong>Ver en Hive.blog:</strong> <a id="hive-blog-link" href="#" target="_blank" data-astro-cid-n5uiyq6w>Enlace Original</a></p>
+        </div>
     </div>
 
     <script is:inline>
-         
-        // Este script se ejecuta en el cliente después de que la página ha sido renderizada por Astro
-        document.addEventListener('DOMContentLoaded', () => {
-            const postBodyContentDiv = document.getElementById('post-body-content');
-            if (postBodyContentDiv) {
-                // Astro pasa el body como una string. marked.parse la convierte.
-                const actualBody = {JSON.stringify(postDetail ? postDetail.body : '')};
+    // Este script se ejecuta en el cliente después de que la página ha sido renderizada por Astro
+    document.addEventListener('DOMContentLoaded', async () => { // Hacemos la función asíncrona
+        const postBodyContentDiv = document.getElementById('post-body-content');
+        const postTitleElement = document.getElementById('post-title'); // Necesitaremos un ID para el título
+        const postMetaElement = document.getElementById('post-meta'); // Y para la meta data
+        const errorMessageDiv = document.getElementById('error-message-container'); // Y para el contenedor de error
+        const postDetailContainer = document.getElementById('post-detail-container'); // Y para el contenedor de detalle
 
+        // Obtenemos la URL actual del navegador
+        const urlParams = new URLSearchParams(window.location.search);
+        const author = urlParams.get('author');
+        const permlink = urlParams.get('permlink');
+
+        console.log("CLIENT-SIDE DEBUG: author leído de la URL:", author);
+        console.log("CLIENT-SIDE DEBUG: permlink leído de la URL:", permlink);
+
+        let postDetail = null;
+        let errorMessage = null;
+
+        if (author && permlink) {
+            try {
+                // ** NOTA: Reemplaza 'FUNCTIONS_BASE_URL' por la URL real de tu función Netlify aquí **
+                // Astro no puede pasar variables del frontmatter a is:inline directamente si no son JSON.stringified
+                // Así que definimos la URL base de nuevo aquí o la pasamos por un atributo data-
+                const FUNCTIONS_BASE_URL_CLIENT = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions'; // Re-define aquí
+
+                const response = await fetch(`<span class="math-inline">\{FUNCTIONS\_BASE\_URL\_CLIENT\}/get\-single\-post?author\=</span>{author}&permlink=${permlink}`);
+                const data = await response.json();
+
+                if (data.error) {
+                    errorMessage = data.error;
+                    console.error("Error al cargar el detalle del post (client-side):", data.details);
+                } else {
+                    postDetail = data;
+                }
+            } catch (error) {
+                errorMessage = "Error de conexión al cargar el post.";
+                console.error("Error fetching single post (client-side):", error);
+            }
+        } else {
+            errorMessage = "Faltan los parámetros 'author' o 'permlink' para ver el post.";
+        }
+
+        // Ahora, actualizamos el DOM con los datos obtenidos
+        if (errorMessage) {
+            if (errorMessageDiv) {
+                errorMessageDiv.innerHTML = `
+                    <h1>Error al cargar el post</h1>
+                    <p>${errorMessage}</p>
+                `;
+                if (postDetailContainer) postDetailContainer.style.display = 'none'; // Oculta el contenedor del post si hay error
+            }
+        } else if (postDetail) {
+            if (postDetailContainer) postDetailContainer.style.display = 'block'; // Muestra el contenedor del post
+
+            if (postTitleElement) postTitleElement.textContent = postDetail.title;
+            if (postMetaElement) postMetaElement.innerHTML = `Publicado por ${postDetail.author} el ${new Date(postDetail.created).toLocaleDateString()}`;
+
+            if (postBodyContentDiv) {
+                const actualBody = postDetail.body; // postDetail ya es el objeto, no necesita JSON.stringify aquí
                 try {
-                    // Asegurarse de que Marked.js está cargado y disponible
                     if (typeof marked !== 'undefined') {
-                        postBodyContentDiv.innerHTML = marked.parse(actualBody.replace(/^"|"$/g, '')); // Quitar comillas extra si hay
+                        postBodyContentDiv.innerHTML = marked.parse(actualBody);
                     } else {
-                        // Fallback si marked.js no carga por alguna razón
-                        postBodyContentDiv.innerHTML = actualBody.replace(/\n/g, '<br>').replace(/^"|"$/g, '');
+                        postBodyContentDiv.innerHTML = actualBody.replace(/\n/g, '<br>');
                         console.warn("Marked.js no está disponible. Mostrando Markdown básico.");
                     }
                 } catch (e) {
-                    console.error("Error al parsear Markdown:", e);
+                    console.error("Error al parsear Markdown (client-side):", e);
                     postBodyContentDiv.innerHTML = "<p>Error al mostrar el contenido del post.</p>";
                 }
             }
-        });
-    </script>
+            // Actualiza el enlace de Hive.blog si existe
+            const hiveBlogLink = document.getElementById('hive-blog-link');
+            if (hiveBlogLink) {
+                hiveBlogLink.href = postDetail.url;
+            }
+            // Actualiza el título de la página
+            document.title = `${postDetail.title} - Mi Blog de Hive`;
+
+        } else {
+            // Estado inicial mientras se carga, o si no hay error pero tampoco post (raro)
+            if (errorMessageDiv) errorMessageDiv.innerHTML = `<h1>Cargando post...</h1>`;
+            if (postDetailContainer) postDetailContainer.style.display = 'none';
+        }
+    });
+</script>
 </body>
 </html>
