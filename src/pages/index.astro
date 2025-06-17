@@ -82,7 +82,7 @@ try {
             ) : (
                 initialPosts.map(post => (
                     <li>
-                        <a href={`/post-detail?author=<span class="math-inline">\{post\.author\}&permlink\=</span>{post.permlink}`} class="post-title">
+                        <a href={`/post-detail?author=\{post\.author\}&permlink\={post.permlink}`} class="post-title">
                             {post.title}
                         </a>
                         <p class="post-meta">Publicado por {post.author} el {new Date(post.created).toLocaleDateString()}</p>
@@ -118,7 +118,7 @@ try {
 
         let url = `${FUNCTIONS_BASE_URL}/get-user-posts?username=${USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}`;
         if (currentStartAuthor && currentStartPermlink) {
-            url += `&startAuthor=<span class="math-inline">\{currentStartAuthor\}&startPermlink\=</span>{currentStartPermlink}`;
+            url += `&startAuthor=\{currentStartAuthor\}&startPermlink\={currentStartPermlink}`;
         }
 
         try {
@@ -144,7 +144,7 @@ try {
             data.posts.forEach(post => {
                 const li = document.createElement('li');
                 const a = document.createElement('a');
-                a.href = `/post-detail?author=<span class="math-inline">\{post\.author\}&permlink\=</span>{post.permlink}`;
+                a.href = `/post-detail?author=\{post\.author\}&permlink\={post.permlink}`;
                 a.className = 'post-title';
                 a.textContent = post.title;
 

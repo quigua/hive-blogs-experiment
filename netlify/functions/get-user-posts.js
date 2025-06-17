@@ -19,7 +19,7 @@ exports.handler = async (event, context) => {
     const fetchBatchSize = 20; // Reducido temporalmente para depuración, para ver si afecta la respuesta inicial
 
     console.log(`Iniciando búsqueda para usuario: ${username}, límite: ${limit}`);
-    console.log(`Paginación inicial: startAuthor=<span class="math-inline">\{startAuthor\}, startPermlink\=</span>{startPermlink}`);
+    console.log(`Paginación inicial: startAuthor=\{startAuthor\}, startPermlink\={startPermlink}`);
 
     try {
         while (hasMore && allUserPosts.length < limit) {
@@ -116,7 +116,7 @@ exports.handler = async (event, context) => {
                 const lastPostInBatch = postsBatch[postsBatch.length - 1];
                 startAuthor = lastPostInBatch.author;
                 startPermlink = lastPostInBatch.permlink;
-                console.log(`Actualizando paginación: startAuthor=<span class="math-inline">\{startAuthor\}, startPermlink\=</span>{startPermlink}`);
+                console.log(`Actualizando paginación: startAuthor=\{startAuthor\}, startPermlink\={startPermlink}`);
             } else {
                 hasMore = false; // No hay más publicaciones si el batch está vacío
                 console.log("Batch vacío, estableciendo hasMore a false.");
