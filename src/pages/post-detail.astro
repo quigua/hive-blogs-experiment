@@ -29,8 +29,8 @@ const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/f
         }
         .back-button:hover { background-color: #5a6268;}
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     
-     
 </head>
 <body data-astro-cid-n5uiyq6w>
     <div class="post-content-wrapper" data-astro-cid-n5uiyq6w>
@@ -75,7 +75,7 @@ const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/f
                 // Así que definimos la URL base de nuevo aquí o la pasamos por un atributo data-
                 const FUNCTIONS_BASE_URL_CLIENT = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions'; // Re-define aquí
 
-                const response = await fetch(`<span class="math-inline">\{FUNCTIONS\_BASE\_URL\_CLIENT\}/get\-single\-post?author\=</span>{author}&permlink=${permlink}`);
+                const response = await fetch(`{FUNCTIONS_BASE_URL_CLIENT}/get-single-post?author=${author}&permlink=${permlink}`);
                 const data = await response.json();
 
                 if (data.error) {
