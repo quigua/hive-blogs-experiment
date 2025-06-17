@@ -17,7 +17,7 @@ let errorMessage = null;
 
 if (author && permlink) {
     try {
-        const response = await fetch(`<span class="math-inline">\{FUNCTIONS\_BASE\_URL\}/get\-single\-post?author\=</span>{author}&permlink=${permlink}`);
+        const response = await fetch(`${FUNCTIONS_BASE_URL}/get-user-posts?username=${USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}`);
         const data = await response.json();
 
         if (data.error) {

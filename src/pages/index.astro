@@ -10,7 +10,7 @@ let nextStartAuthor = null;
 let nextStartPermlink = null;
 
 try {
-    const response = await fetch(`<span class="math-inline">\{FUNCTIONS\_BASE\_URL\}/get\-user\-posts?username\=</span>{USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}`);
+    const response = await fetch(`${FUNCTIONS_BASE_URL}/get-user-posts?username=${USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}`);  
     const data = await response.json();
 
     if (data.error) {
@@ -116,7 +116,7 @@ try {
 
         const { currentStartAuthor, currentStartPermlink } = window.paginationState;
 
-        let url = `<span class="math-inline">\{FUNCTIONS\_BASE\_URL\_CLIENT\}/get\-user\-posts?username\=</span>{USERNAME_TO_FETCH_CLIENT}&limit=${POSTS_PER_PAGE_CLIENT}`;
+        let url = `${FUNCTIONS_BASE_URL}/get-user-posts?username=${USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}`;
         if (currentStartAuthor && currentStartPermlink) {
             url += `&startAuthor=<span class="math-inline">\{currentStartAuthor\}&startPermlink\=</span>{currentStartPermlink}`;
         }
