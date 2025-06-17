@@ -2,7 +2,6 @@
 // src/pages/post-detail.astro
 // Este script se ejecuta en el servidor (al construir/solicitar la página)
 
-import { url } from "astro/url";
 
 // Define la URL base de tus funciones Netlify
 const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
@@ -11,6 +10,11 @@ const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/f
 const urlParams = Astro.url.searchParams;
 const author = urlParams.get('author');
 const permlink = urlParams.get('permlink');
+
+// ** NUEVOS CONSOLE.LOG PARA DEPURACIÓN **
+console.log("DEBUG: author leído de la URL:", author);
+console.log("DEBUG: permlink leído de la URL:", permlink);
+// ** FIN NUEVOS CONSOLE.LOG **
 
 let postDetail = null;
 let errorMessage = null;
