@@ -1,7 +1,7 @@
 ---
 // src/pages/index.astro
 import PostCard from '../components/PostCard.astro';
-import '../styles/global.css'; // Esto debería funcionar para estilos globales
+import '../styles/global.css';
 
 // Constantes y lógica de carga inicial de posts (server-side)
 const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
@@ -32,9 +32,6 @@ try {
     <title>Mi Blog de Hive - Astro</title>
 </head>
 <body>
-    {# Eliminamos el botón de modo oscuro por ahora #}
-    {# Eliminamos la paginación y sus botones por ahora #}
-
     <h1>Posts de Hive de @{USERNAME_TO_FETCH}</h1>
 
     <div id="posts-list">
@@ -49,8 +46,5 @@ try {
             )}
         </div>
     </div>
-
-    {# Eliminamos todos los scripts is:inline #}
-
 </body>
 </html>
