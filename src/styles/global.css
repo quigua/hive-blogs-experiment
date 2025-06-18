@@ -1,90 +1,95 @@
 /* src/styles/global.css */
 
+/* Variables CSS para el tema claro (por defecto) */
 :root {
-    /* Colores del tema base (Claro) */
-    --body-bg-color: #f4f4f4;
     --text-color: #333;
-    --heading-color: #007bff;
-
-    /* Colores para las tarjetas de post */
-    --card-bg-color: #fff;
-    --card-border-color: #e0e0e0;
-    --card-shadow: 0 2px 5px rgba(0,0,0,0.05);
-    --card-hover-shadow: 0 4px 10px rgba(0,0,0,0.1);
-    --title-color: #007bff;
-    --meta-text-color: #777;
-    --author-text-color: #555;
-
-    /* Colores para botones */
-    --button-bg-color: #6c757d;
-    --button-text-color: #fff;
-    --button-hover-bg-color: #5a6268;
-
-    /* Espaciado y radios de borde */
-    --spacing-sm: 10px;
-    --spacing-md: 20px;
-    --spacing-lg: 30px;
-    --card-border-radius: 8px;
+    --background-color: #f0f2f5;
+    --card-background: #ffffff;
+    --card-border: #e0e0e0;
+    --link-color: #007bff;
+    --button-background: #007bff;
+    --button-text-color: #ffffff;
 }
 
-/* Variables para el MODO OSCURO.
-  Estas se aplicarán cuando el <body> tenga la clase 'dark-mode'.
-*/
+/* Estilos para el modo oscuro */
 body.dark-mode {
-    --body-bg-color: #282c34; /* Fondo del body oscuro */
-    --text-color: #e0e0e0; /* Texto claro */
-    --heading-color: #8be9fd; /* Encabezados de color neón/claro */
-
-    --card-bg-color: #3b4252; /* Fondo de la tarjeta oscuro */
-    --card-border-color: #4a5268; /* Borde de la tarjeta oscuro */
-    --card-shadow: 0 2px 5px rgba(0,0,0,0.2); /* Sombra más pronunciada */
-    --card-hover-shadow: 0 4px 10px rgba(0,0,0,0.3); /* Sombra al pasar el ratón */
-    --title-color: #a2e2ff; /* Título del post más claro */
-    --meta-text-color: #b0b8c6; /* Texto meta más claro */
-    --author-text-color: #c0c8d6; /* Nombre del autor más claro */
-
-    --button-bg-color: #5e81ac; /* Botón oscuro */
-    --button-hover-bg-color: #88c0d0; /* Botón oscuro hover */
+    --text-color: #e0e0e0;
+    --background-color: #282c34;
+    --card-background: #3c414d;
+    --card-border: #4a505c;
+    --link-color: #8ab4f8; /* Un azul más claro para enlaces en modo oscuro */
+    --button-background: #61afef; /* Un azul que contraste bien */
+    --button-text-color: #282c34;
 }
 
-
-/* Estilos globales básicos que USAN las variables */
+/* Estilos generales del cuerpo */
 body {
-    margin: var(--spacing-md);
     font-family: Arial, sans-serif;
+    color: var(--text-color);
+    background-color: var(--background-color);
+    margin: 0;
+    padding: 20px;
     line-height: 1.6;
-    background-color: var(--body-bg-color); /* Usa la variable */
-    color: var(--text-color); /* Usa la variable */
-    transition: background-color 0.3s ease, color 0.3s ease; /* Transición suave */
+    transition: background-color 0.3s ease, color 0.3s ease; /* Transición suave para el tema */
 }
 
-h1 {
-    color: var(--heading-color); /* Usa la variable */
-    text-align: center;
-    margin-bottom: var(--spacing-lg);
+h1, h2 {
+    color: var(--text-color);
 }
 
-.post-list {
-    max-width: 800px;
-    margin: 0 auto;
-}
-
-/* Estilos para el botón de cambio de tema */
+/* Estilos del botón de modo oscuro */
 #theme-toggle {
-    position: fixed; /* Lo fijamos en la pantalla */
-    top: var(--spacing-md);
-    right: var(--spacing-md);
-    padding: 8px 15px;
-    background-color: var(--button-bg-color);
+    background-color: var(--button-background);
     color: var(--button-text-color);
     border: none;
+    padding: 10px 15px;
     border-radius: 5px;
     cursor: pointer;
-    font-size: 0.9em;
-    z-index: 1000; /* Asegura que esté por encima de otros elementos */
-    transition: background-color 0.2s ease;
+    font-size: 1em;
+    margin-bottom: 20px;
+    transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 #theme-toggle:hover {
-    background-color: var(--button-hover-bg-color);
+    opacity: 0.9;
 }
+
+/* Estilos para la lista de posts (si aplica) */
+.post-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+}
+
+/* Estilos para PostCard (Asegúrate de que PostCard.astro use estas variables o tenga sus propios estilos si son complejos) */
+/* Si PostCard.astro ya tiene sus propios estilos, puede que no necesites tocarlo,
+   pero si quieres que reaccionen al modo oscuro, deben usar las variables CSS. */
+.post-card { /* Asumiendo que PostCard.astro renderiza un div con esta clase */
+    background-color: var(--card-background);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 15px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.post-card .post-title {
+    font-size: 1.2em;
+    color: var(--link-color);
+    text-decoration: none;
+    font-weight: bold;
+    display: block;
+    margin-bottom: 5px;
+}
+
+.post-card .post-title:hover {
+    text-decoration: underline;
+}
+
+.post-card .post-meta {
+    font-size: 0.9em;
+    color: var(--text-color); /* Usará el color de texto general */
+    opacity: 0.7;
+}
+
+/* Puedes añadir más estilos si tienes otras secciones específicas que necesiten reaccionar al tema */
