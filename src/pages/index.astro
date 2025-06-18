@@ -1,7 +1,6 @@
 ---
 // src/pages/index.astro
 import PostCard from '../components/PostCard.astro';
-import '../styles/global.css';
 const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
 const USERNAME_TO_FETCH = 'quigua';
 const POSTS_PER_PAGE = 20;
@@ -36,8 +35,8 @@ try {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mi Blog de Hive - Astro</title>
-    
-    <script>import { marked } from 'marked';// ... tu código que usa marked.parse()</script>
+    <link rel="stylesheet" href="/styles/global.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     
 </head>
 <body>
