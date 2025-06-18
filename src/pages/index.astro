@@ -1,6 +1,7 @@
 ---
 // src/pages/index.astro
 import PostCard from '../components/PostCard.astro';
+import '../styles/global.css';
 const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
 const USERNAME_TO_FETCH = 'quigua';
 const POSTS_PER_PAGE = 20;
@@ -35,7 +36,6 @@ try {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mi Blog de Hive - Astro</title>
-    <link rel="stylesheet" href="/styles/global.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     
 </head>
@@ -46,21 +46,15 @@ try {
 
     <div id="posts-list">
         <h2>Últimos Posts</h2>
-        <ul id="posts-container">
+        <div class="post-list">
             {initialPosts.length === 0 ? (
-                <li>No se encontraron posts o hubo un error al cargar.</li>
+                <p>No se encontraron posts o hubo un error al cargar.</p>
             ) : (
                 initialPosts.map(post => (
-                    <li>
-                        
-                        <a href={`/post-detail?author=${post.author}&permlink=${post.permlink}`} class="post-title">
-                            {post.title}
-                        </a>
-                        <p class="post-meta">Publicado por {post.author} el {new Date(post.created).toLocaleDateString()}</p>
-                    </li>
+                    <PostCard post={post} /> {/* ¡Usa el componente PostCard aquí! */}
                 ))
             )}
-        </ul>
+        </div>
         {hasMorePosts && <button id="load-more-button" class="load-more-button">Cargar más</button>}
     </div>
     <script is:inline>
