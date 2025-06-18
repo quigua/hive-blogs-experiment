@@ -3,15 +3,12 @@
 import PostCard from '../components/PostCard.astro';
 import '../styles/global.css';
 
-// ¡ESTAS CONSTANTES DEBEN ESTAR DENTRO DEL FRONTMATTER!
+// Constantes y lógica de carga inicial de posts (server-side)
 const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
 const USERNAME_TO_FETCH = 'quigua';
 const POSTS_PER_PAGE = 20;
 
 let initialPosts = [];
-let hasMorePosts = false;
-let nextStartAuthor = null;
-let nextStartPermlink = null;
 
 try {
     const response = await fetch(`${FUNCTIONS_BASE_URL}/get-user-posts?username=${USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}`);
@@ -21,11 +18,7 @@ try {
         console.error("Error al cargar posts iniciales (server-side):", data.error, data.details);
     } else {
         initialPosts = data.posts;
-        hasMorePosts = data.hasMore;
-        nextStartAuthor = data.nextPage?.startAuthor || null;
-        nextStartPermlink = data.nextPage?.permlink || null;
-        console.log("Posts iniciales cargados (server-side):", initialPosts.length, "Has more:", hasMorePosts);
-        console.log("Next page info (server-side):", nextStartAuthor, nextStartPermlink);
+        console.log("Posts iniciales cargados (server-side):", initialPosts.length);
     }
 } catch (error) {
     console.error("Error al conectar con la función Netlify para posts iniciales (server-side):", error);
@@ -40,15 +33,9 @@ try {
 </head>
 <body>
     <button id="theme-toggle">Activar Modo Oscuro</button>
+    <h1>Posts de Hive de @{USERNAME_TO_FETCH}</h1>
 
-    <h1>Posts de Hive de @{USERNAME_TO_FETCH}</h1> {# Esto es correcto porque USERNAME_TO_FETCH está en el frontmatter #}
-
-    <div
-        id="posts-list"
-        data-initial-has-more={hasMorePosts}
-        data-initial-start-author={nextStartAuthor}
-        data-initial-start-permlink={nextStartPermlink}
-    >
+    <div id="posts-list">
         <h2>Últimos Posts</h2>
         <div class="post-list">
             {initialPosts.length === 0 ? (
@@ -59,138 +46,7 @@ try {
                 ))
             )}
         </div>
-
-        {hasMorePosts && <button id="load-more-button" class="load-more-button">Cargar más</button>}
     </div>
-
-    <script is:inline>
-        const themeToggle = document.getElementById('theme-toggle');
-        const body = document.body;
-
-        function applyTheme(theme) {
-            if (theme === 'dark') {
-                body.classList.add('dark-mode');
-                themeToggle.textContent = 'Activar Modo Claro';
-            } else {
-                body.classList.remove('dark-mode');
-                themeToggle.textContent = 'Activar Modo Oscuro';
-            }
-        }
-
-        const savedTheme = localStorage.getItem('theme');
-        if (savedTheme) {
-            applyTheme(savedTheme);
-        } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-            applyTheme('dark');
-        } else {
-            applyTheme('light');
-        }
-
-        themeToggle.addEventListener('click', () => {
-            if (body.classList.contains('dark-mode')) {
-                applyTheme('light');
-                localStorage.setItem('theme', 'light');
-            } else {
-                applyTheme('dark');
-                localStorage.setItem('theme', 'dark');
-            }
-        });
-    </script>
-
-    <script is:inline>
-        // ¡REUTILIZA LAS MISMAS CONSTANTES!
-        // No necesitas duplicarlas si las obtienes del DOM o si son las mismas
-        // que se usaron en el server-side para construir el HTML.
-        // Las definiremos aquí localmente para el script del cliente para evitar errores.
-        const FUNCTIONS_BASE_URL_CLIENT = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
-        const USERNAME_TO_FETCH_CLIENT = 'quigua';
-        const POSTS_PER_PAGE_CLIENT = 20;
-
-        const postsListDiv = document.getElementById('posts-list');
-        window.paginationState = {
-            // Asegúrate de que los valores null no se conviertan a la cadena "null"
-            currentStartAuthor: postsListDiv.dataset.initialStartAuthor === 'null' ? null : postsListDiv.dataset.initialStartAuthor,
-            currentStartPermlink: postsListDiv.dataset.initialStartPermlink === 'null' ? null : postsListDiv.dataset.initialStartPermlink,
-            hasMorePosts: postsListDiv.dataset.initialHasMore === 'true'
-        };
-
-        const postsContainerClient = postsListDiv.querySelector('.post-list');
-        const loadMoreButtonClient = document.getElementById('load-more-button');
-
-        async function fetchMorePosts() {
-            loadMoreButtonClient.textContent = 'Cargando...';
-            loadMoreButtonClient.disabled = true;
-
-            const { currentStartAuthor, currentStartPermlink } = window.paginationState;
-
-            let url = `${FUNCTIONS_BASE_URL_CLIENT}/get-user-posts?username=${USERNAME_TO_FETCH_CLIENT}&limit=${POSTS_PER_PAGE_CLIENT}`;
-            if (currentStartAuthor && currentStartPermlink) {
-                url += `&startAuthor=${currentStartAuthor}&startPermlink=${currentStartPermlink}`;
-            }
-
-            try {
-                console.log("Intentando fetch de más posts desde el cliente:", url);
-                const response = await fetch(url);
-                const data = await response.json();
-                console.log("Respuesta de fetch (cliente):", data);
-
-                if (data.error) {
-                    console.error("Error al cargar más posts (client-side):", data.error, data.details);
-                    loadMoreButtonClient.textContent = 'Error al cargar';
-                    loadMoreButtonClient.disabled = false;
-                    return;
-                }
-
-                if (data.posts.length === 0) {
-                    loadMoreButtonClient.style.display = 'none';
-                    const noMoreMessage = document.createElement('p');
-                    noMoreMessage.textContent = 'No hay más posts para cargar.';
-                    postsListDiv.appendChild(noMoreMessage);
-                    return;
-                }
-
-                const tempDiv = document.createElement('div');
-                data.posts.forEach(post => {
-                    const newPostHTML = `
-                        <div class="post-card">
-                            <a href="/post-detail?author=${post.author}&permlink=${post.permlink}" class="post-title">
-                                ${post.title}
-                            </a>
-                            <p class="post-meta">Publicado por ${post.author} el ${new Date(post.created).toLocaleDateString()}</p>
-                        </div>
-                    `;
-                    tempDiv.innerHTML += newPostHTML;
-                });
-                postsContainerClient.appendChild(tempDiv);
-
-                window.paginationState.hasMorePosts = data.hasMore;
-                if (data.hasMore) {
-                    window.paginationState.currentStartAuthor = data.nextPage.startAuthor;
-                    window.paginationState.currentStartPermlink = data.nextPage.permlink;
-                    loadMoreButtonClient.textContent = 'Cargar más';
-                    loadMoreButtonClient.disabled = false;
-                } else {
-                    loadMoreButtonClient.style.display = 'none';
-                    const noMoreMessage = document.createElement('p');
-                    noMoreMessage.textContent = 'Todos los posts han sido cargados.';
-                    postsListDiv.appendChild(noMoreMessage);
-                }
-
-            } catch (error) {
-                console.error("Error fetching more posts (client-side):", error);
-                loadMoreButtonClient.textContent = 'Error de conexión';
-                loadMoreButtonClient.disabled = false;
-            }
-        }
-
-        document.addEventListener('DOMContentLoaded', () => {
-            if (loadMoreButtonClient) {
-                if (!window.paginationState.hasMorePosts) {
-                    loadMoreButtonClient.style.display = 'none';
-                }
-                loadMoreButtonClient.addEventListener('click', fetchMorePosts);
-            }
-        });
-    </script>
+    <script src="../scripts/theme.js"></script>
 </body>
 </html>
