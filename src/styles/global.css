@@ -11,16 +11,18 @@
     --button-text-color: #ffffff;
 }
 
-/* Estilos para el modo oscuro */
+/* Estilos para el modo oscuro (COMENTADOS TEMPORALMENTE) */
+/*
 body.dark-mode {
     --text-color: #e0e0e0;
     --background-color: #282c34;
     --card-background: #3c414d;
     --card-border: #4a505c;
-    --link-color: #8ab4f8; /* Un azul más claro para enlaces en modo oscuro */
-    --button-background: #61afef; /* Un azul que contraste bien */
+    --link-color: #8ab4f8;
+    --button-background: #61afef;
     --button-text-color: #282c34;
 }
+*/
 
 /* Estilos generales del cuerpo */
 body {
@@ -30,28 +32,11 @@ body {
     margin: 0;
     padding: 20px;
     line-height: 1.6;
-    transition: background-color 0.3s ease, color 0.3s ease; /* Transición suave para el tema */
+    /* transition: background-color 0.3s ease, color 0.3s ease;  COMENTADO TEMPORALMENTE */
 }
 
 h1, h2 {
     color: var(--text-color);
-}
-
-/* Estilos del botón de modo oscuro */
-#theme-toggle {
-    background-color: var(--button-background);
-    color: var(--button-text-color);
-    border: none;
-    padding: 10px 15px;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 1em;
-    margin-bottom: 20px;
-    transition: background-color 0.3s ease, color 0.3s ease;
-}
-
-#theme-toggle:hover {
-    opacity: 0.9;
 }
 
 /* Estilos para la lista de posts (si aplica) */
@@ -61,16 +46,14 @@ h1, h2 {
     gap: 20px;
 }
 
-/* Estilos para PostCard (Asegúrate de que PostCard.astro use estas variables o tenga sus propios estilos si son complejos) */
-/* Si PostCard.astro ya tiene sus propios estilos, puede que no necesites tocarlo,
-   pero si quieres que reaccionen al modo oscuro, deben usar las variables CSS. */
-.post-card { /* Asumiendo que PostCard.astro renderiza un div con esta clase */
+/* Estilos para PostCard */
+.post-card {
     background-color: var(--card-background);
     border: 1px solid var(--card-border);
     border-radius: 8px;
     padding: 15px;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+    /* transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease; COMENTADO TEMPORALMENTE */
 }
 
 .post-card .post-title {
@@ -88,8 +71,6 @@ h1, h2 {
 
 .post-card .post-meta {
     font-size: 0.9em;
-    color: var(--text-color); /* Usará el color de texto general */
+    color: var(--text-color);
     opacity: 0.7;
 }
-
-/* Puedes añadir más estilos si tienes otras secciones específicas que necesiten reaccionar al tema */
