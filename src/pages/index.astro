@@ -105,9 +105,9 @@ try {
     // Inyectamos las variables desde el frontmatter directamente en el script
     // Usamos una variable global para el state de paginación para facilitar el acceso
     window.paginationState = {
-        currentStartAuthor: {JSON.stringify(nextStartAuthor)},
-        currentStartPermlink: {JSON.stringify(nextStartPermlink)},
-        hasMorePosts: {JSON.stringify(hasMorePosts)}
+        currentStartAuthor: JSON.stringify(nextStartAuthor),
+        currentStartPermlink: JSON.stringify(nextStartPermlink),
+        hasMorePosts: JSON.stringify(hasMorePosts)
     };
 
     const postsContainerClient = document.getElementById('posts-container');
