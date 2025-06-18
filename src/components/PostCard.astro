@@ -1,0 +1,68 @@
+---
+// src/components/PostCard.astro
+// Este componente recibe un objeto 'post' como propiedad.
+// El 'post' debe contener al menos: { author, permlink, title, created }
+const { post } = Astro.props;
+
+// Construye la URL de detalle del post
+const postDetailUrl = `/post-detail?author=${post.author}&permlink=${post.permlink}`;
+
+// Formatea la fecha para una mejor visualización
+const formattedDate = new Date(post.created).toLocaleDateString('es-ES', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+});
+---
+
+<div class="post-card">
+    <a href={postDetailUrl} class="post-link">
+        <h2 class="post-title">{post.title}</h2>
+    </a>
+    <p class="post-meta">
+        Publicado por <span class="post-author">{post.author}</span> el {formattedDate}
+    </p>
+    </div>
+
+<style>
+    .post-card {
+        background-color: var(--card-bg-color, #fff); /* Usa una variable CSS para el color de fondo */
+        border: 1px solid var(--card-border-color, #e0e0e0); /* Variable para el color del borde */
+        border-radius: var(--card-border-radius, 8px);
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: var(--card-shadow, 0 2px 5px rgba(0,0,0,0.05));
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .post-card:hover {
+        transform: translateY(-5px);
+        box-shadow: var(--card-hover-shadow, 0 4px 10px rgba(0,0,0,0.1));
+    }
+
+    .post-link {
+        text-decoration: none;
+        color: inherit; /* Hereda el color del padre para el texto del título */
+    }
+
+    .post-title {
+        color: var(--title-color, #007bff); /* Variable para el color del título */
+        font-size: 1.8em;
+        margin-top: 0;
+        margin-bottom: 10px;
+    }
+
+    .post-title:hover {
+        text-decoration: underline;
+    }
+
+    .post-meta {
+        font-size: 0.9em;
+        color: var(--meta-text-color, #777); /* Variable para el color del texto meta */
+    }
+
+    .post-author {
+        font-weight: bold;
+        color: var(--author-text-color, #555); /* Variable para el color del autor */
+    }
+</style>
