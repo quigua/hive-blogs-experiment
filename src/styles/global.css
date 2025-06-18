@@ -11,8 +11,6 @@
     --button-text-color: #ffffff;
 }
 
-/* Estilos para el modo oscuro (COMENTADOS TEMPORALMENTE) */
-/*
 body.dark-mode {
     --text-color: #e0e0e0;
     --background-color: #282c34;
@@ -22,7 +20,7 @@ body.dark-mode {
     --button-background: #61afef;
     --button-text-color: #282c34;
 }
-*/
+
 
 /* Estilos generales del cuerpo */
 body {
