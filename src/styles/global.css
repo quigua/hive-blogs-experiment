@@ -1,29 +1,24 @@
 /* src/styles/global.css */
 
-/*
-  Define tus variables CSS personalizadas (Custom Properties) aquí.
-  Estas variables se pueden usar en cualquier lugar de tu CSS.
-*/
-
 :root {
     /* Colores del tema base (Claro) */
-    --body-bg-color: #f4f4f4; /* Color de fondo del body */
-    --text-color: #333; /* Color de texto principal */
-    --heading-color: #007bff; /* Color de los encabezados (H1, H2, etc.) */
+    --body-bg-color: #f4f4f4;
+    --text-color: #333;
+    --heading-color: #007bff;
 
-    /* Colores para las tarjetas de post (PostCard.astro) */
-    --card-bg-color: #fff; /* Fondo de la tarjeta */
-    --card-border-color: #e0e0e0; /* Borde de la tarjeta */
-    --card-shadow: 0 2px 5px rgba(0,0,0,0.05); /* Sombra de la tarjeta */
-    --card-hover-shadow: 0 4px 10px rgba(0,0,0,0.1); /* Sombra de la tarjeta al pasar el ratón */
-    --title-color: #007bff; /* Color del título del post */
-    --meta-text-color: #777; /* Color del texto meta (fecha, etc.) */
-    --author-text-color: #555; /* Color del nombre del autor */
+    /* Colores para las tarjetas de post */
+    --card-bg-color: #fff;
+    --card-border-color: #e0e0e0;
+    --card-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    --card-hover-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    --title-color: #007bff;
+    --meta-text-color: #777;
+    --author-text-color: #555;
 
     /* Colores para botones */
-    --button-bg-color: #6c757d; /* Fondo del botón */
-    --button-text-color: #fff; /* Texto del botón */
-    --button-hover-bg-color: #5a6268; /* Fondo del botón al pasar el ratón */
+    --button-bg-color: #6c757d;
+    --button-text-color: #fff;
+    --button-hover-bg-color: #5a6268;
 
     /* Espaciado y radios de borde */
     --spacing-sm: 10px;
@@ -32,14 +27,64 @@
     --card-border-radius: 8px;
 }
 
-/* Estilos globales básicos */
+/* Variables para el MODO OSCURO.
+  Estas se aplicarán cuando el <body> tenga la clase 'dark-mode'.
+*/
+body.dark-mode {
+    --body-bg-color: #282c34; /* Fondo del body oscuro */
+    --text-color: #e0e0e0; /* Texto claro */
+    --heading-color: #8be9fd; /* Encabezados de color neón/claro */
+
+    --card-bg-color: #3b4252; /* Fondo de la tarjeta oscuro */
+    --card-border-color: #4a5268; /* Borde de la tarjeta oscuro */
+    --card-shadow: 0 2px 5px rgba(0,0,0,0.2); /* Sombra más pronunciada */
+    --card-hover-shadow: 0 4px 10px rgba(0,0,0,0.3); /* Sombra al pasar el ratón */
+    --title-color: #a2e2ff; /* Título del post más claro */
+    --meta-text-color: #b0b8c6; /* Texto meta más claro */
+    --author-text-color: #c0c8d6; /* Nombre del autor más claro */
+
+    --button-bg-color: #5e81ac; /* Botón oscuro */
+    --button-hover-bg-color: #88c0d0; /* Botón oscuro hover */
+}
+
+
+/* Estilos globales básicos que USAN las variables */
 body {
     margin: var(--spacing-md);
     font-family: Arial, sans-serif;
     line-height: 1.6;
+    background-color: var(--body-bg-color); /* Usa la variable */
+    color: var(--text-color); /* Usa la variable */
+    transition: background-color 0.3s ease, color 0.3s ease; /* Transición suave */
 }
 
-/*
-  Aquí puedes añadir estilos CSS que sean aplicables a todo el sitio
-  y no estén directamente ligados a un componente específico.
-*/
+h1 {
+    color: var(--heading-color); /* Usa la variable */
+    text-align: center;
+    margin-bottom: var(--spacing-lg);
+}
+
+.post-list {
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+/* Estilos para el botón de cambio de tema */
+#theme-toggle {
+    position: fixed; /* Lo fijamos en la pantalla */
+    top: var(--spacing-md);
+    right: var(--spacing-md);
+    padding: 8px 15px;
+    background-color: var(--button-bg-color);
+    color: var(--button-text-color);
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.9em;
+    z-index: 1000; /* Asegura que esté por encima de otros elementos */
+    transition: background-color 0.2s ease;
+}
+
+#theme-toggle:hover {
+    background-color: var(--button-hover-bg-color);
+}

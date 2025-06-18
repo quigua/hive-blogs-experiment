@@ -16,6 +16,7 @@ const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/f
     
 </head>
 <body data-astro-cid-n5uiyq6w>
+    <button id="theme-toggle">Activar Modo Oscuro</button>
     <div class="post-content-wrapper" data-astro-cid-n5uiyq6w>
         <a href="/" class="back-button" data-astro-cid-n5uiyq6w>← Volver a la lista</a>
 
@@ -30,6 +31,44 @@ const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/f
             <p><strong>Ver en Hive.blog:</strong> <a id="hive-blog-link" href="#" target="_blank" data-astro-cid-n5uiyq6w>Enlace Original</a></p>
         </div>
     </div>
+    <script is:inline>
+    const themeToggle = document.getElementById('theme-toggle');
+    const body = document.body;
+
+    // Función para aplicar el tema
+    function applyTheme(theme) {
+        if (theme === 'dark') {
+            body.classList.add('dark-mode');
+            themeToggle.textContent = 'Activar Modo Claro';
+        } else {
+            body.classList.remove('dark-mode');
+            themeToggle.textContent = 'Activar Modo Oscuro';
+        }
+    }
+
+    // 1. Cargar el tema guardado o detectar la preferencia del sistema
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme) {
+        applyTheme(savedTheme);
+    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        // Si no hay tema guardado, detecta la preferencia del sistema operativo
+        applyTheme('dark');
+    } else {
+        // Por defecto, aplica el tema claro
+        applyTheme('light');
+    }
+
+    // 2. Escuchar clics en el botón
+    themeToggle.addEventListener('click', () => {
+        if (body.classList.contains('dark-mode')) {
+            applyTheme('light');
+            localStorage.setItem('theme', 'light');
+        } else {
+            applyTheme('dark');
+            localStorage.setItem('theme', 'dark');
+        }
+    });
+</script>
 
     <script is:inline>
     // Este script se ejecuta en el cliente después de que la página ha sido renderizada por Astro
