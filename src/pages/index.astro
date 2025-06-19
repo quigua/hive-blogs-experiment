@@ -23,8 +23,8 @@ try {
     let hiveData = null;
     let hiveResponse = null;
     let fetchError = null;
+    const requestLimitToHive = 20; 
 
-    // Intentar con los nodos de Hive para la carga inicial
     for (const nodeUrl of hiveNodes) {
         try {
             const response = await fetch(nodeUrl, {
@@ -34,7 +34,7 @@ try {
                     jsonrpc: '2.0',
                     id: 1,
                     method: 'condenser_api.get_discussions_by_blog',
-                    params: [{ tag: USERNAME_TO_FETCH, limit: POSTS_PER_PAGE + 5 }] // Pedir más para filtrar
+                    params: [{ tag: USERNAME_TO_FETCH, limit: requestLimitToHive }] 
                 }),
             });
             if (response.ok) {
