@@ -59,32 +59,25 @@ try {
 
     if (hiveData && !hiveData.error && hiveData.result) {
         const allFetchedItems = hiveData.result || [];
-        // Filtramos para posts originales
+        
+        // --- FILTRADO DE POSTS ORIGINALES PARA EL LOTE INICIAL ---
         const typeFilteredItems = allFetchedItems.filter(post => !post.reblogged_by || post.reblogged_by.length === 0);
         
-        // Seleccionamos los primeros 10 posts
+        // Seleccionamos los primeros 10 posts originales
         initialPosts = typeFilteredItems.slice(0, POSTS_PER_PAGE); 
 
-        // Determinamos la paginación para la *próxima* llamada, usando la lista original de Hive.
-        if (initialPosts.length < POSTS_PER_PAGE) {
+        // --- DETERMINACIÓN DE LA PRÓXIMA PÁGINA BASADA EN EL FEED COMPLETO DE HIVE ---
+        // La paginación siempre se basa en el feed completo de Hive.
+        if (allFetchedItems.length < requestLimitToHive || allFetchedItems.length === 0) {
             initialPostsHasMore = false;
         } else {
-            const lastItemInCurrentBatch = initialPosts[initialPosts.length - 1];
-            // Encontrar el índice del último post *mostrado* en el array *completo sin filtrar* de Hive.
-            const indexOfLastItemInOriginal = allFetchedItems.findIndex(item => 
-                item.author === lastItemInCurrentBatch.author && 
-                item.permlink === lastItemInCurrentBatch.permlink
-            );
-
-            // Si se encontró el post y hay un siguiente post en la lista original de Hive, ese es nuestro punto de inicio.
-            if (indexOfLastItemInOriginal !== -1 && (indexOfLastItemInOriginal + 1) < allFetchedItems.length) {
-                const nextItemFromOriginal = allFetchedItems[indexOfLastItemInOriginal + 1];
-                initialPostsNextStartAuthor = nextItemFromOriginal.author;
-                initialPostsNextStartPermlink = nextItemFromOriginal.permlink;
-            } else {
-                initialPostsHasMore = false;
-            }
+            // El nextStart es el último elemento de la respuesta completa de Hive.
+            const lastItem = allFetchedItems[allFetchedItems.length - 1];
+            initialPostsNextStartAuthor = lastItem.author;
+            initialPostsNextStartPermlink = lastItem.permlink;
+            initialPostsHasMore = true; // Asumimos que hay más si Hive nos dio un lote completo.
         }
+        
         console.log("ASTRO SERVER: Posts originales iniciales cargados:", initialPosts.length, "HasMore:", initialPostsHasMore, "Next:", initialPostsNextStartPermlink);
     } else {
         console.error("ASTRO SERVER: No se pudieron cargar los posts originales iniciales desde Hive.", fetchError);
