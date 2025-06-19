@@ -56,7 +56,6 @@ exports.handler = async (event, context) => {
             'https://api.pharesim.me'
         ];
         
-        // La clave del caché ahora es específica para posts *originales del autor*, sin depender del contentType.
         const cacheKey = `hive:author_posts:${username}:${parsedLimit}:${start_author || 'null'}:${start_permlink || 'null'}`;
         
         let cachedResponse = null;
@@ -83,7 +82,7 @@ exports.handler = async (event, context) => {
             id: 1,
             method: 'condenser_api.get_discussions_by_blog',
             params: [{
-                tag: username, // Seguimos pidiendo por el tag del usuario.
+                tag: username, 
                 limit: requestLimitToHive, 
                 start_author: start_author || undefined,
                 start_permlink: start_permlink || undefined,
@@ -132,7 +131,7 @@ exports.handler = async (event, context) => {
 
         const allFetchedItems = hiveData.result || [];
 
-        // --- FILTRADO ESTRICTO: Solo posts donde el autor es el 'username' buscado y no es un reblog ---
+        // --- FILTRADO MUY ESTRICTO: Solo posts donde el autor es el 'username' solicitado y NO es un reblog ---
         const strictlyOriginalPostsByAuthor = [];
         let skippedInitialDuplicate = false;
 
@@ -149,11 +148,8 @@ exports.handler = async (event, context) => {
             }
         }
 
-        // Tomamos solo la cantidad necesaria para el lote actual.
         const currentBatchItems = strictlyOriginalPostsByAuthor.slice(0, parsedLimit);
 
-        // --- DETERMINACIÓN DE LA PRÓXIMA PÁGINA (nextStartAuthor/Permlink) ---
-        // La paginación se basa en los posts *originales del autor* que logramos obtener.
         let nextStartAuthor = null;
         let nextStartPermlink = null;
         let hasMore = true;
@@ -161,6 +157,7 @@ exports.handler = async (event, context) => {
         if (currentBatchItems.length < parsedLimit) {
             hasMore = false;
         } else {
+            // El nextStart es el último elemento del lote filtrado, asegurando continuidad de posts del autor.
             const lastItem = currentBatchItems[currentBatchItems.length - 1];
             nextStartAuthor = lastItem.author;
             nextStartPermlink = lastItem.permlink;

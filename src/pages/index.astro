@@ -4,8 +4,8 @@ import PostCard from '../components/PostCard.astro';
 import '../styles/global.css';
 
 const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
-const USERNAME_TO_FETCH = 'quigua';
-const POSTS_PER_PAGE = 10; // Sigue siendo la cantidad de posts por página.
+const USERNAME_TO_FETCH = 'quigua'; 
+const POSTS_PER_PAGE = 10; 
 
 // --- Carga inicial de posts (Originales) directamente desde Hive ---
 let initialPosts = [];
@@ -23,7 +23,6 @@ try {
     let hiveData = null;
     let fetchError = null;
 
-    // EL LÍMITE DE LA API DE HIVE ES 20. Pedimos el máximo para tener buffer.
     const requestLimitToHive = 20; 
 
     for (const nodeUrl of hiveNodes) {
@@ -53,36 +52,33 @@ try {
             }
         } catch (error) {
             fetchError = new Error(`ASTRO SERVER: Error de red al conectar con ${nodeUrl}: ${error.message}`);
-            console.error(error); // Log del error de red
-            fetchError = new Error(`ASTRO SERVER: Error de red al conectar con ${nodeUrl}: ${error.message}`);
+            console.error(error); 
         }
     }
 
     if (hiveData && !hiveData.error && hiveData.result) {
         const allFetchedItems = hiveData.result || [];
         
-        // --- FILTRADO EXCLUSIVO PARA POSTS ORIGINALES ---
-        // Esto filtra solo los posts que NO tienen 'reblogged_by' o su array está vacío.
-        const originalPosts = allFetchedItems.filter(post => !post.reblogged_by || post.reblogged_by.length === 0);
+        // --- FILTRADO MUY ESTRICTO: Solo posts donde el autor es 'quigua' Y no es un reblog ---
+        const strictlyOriginalPostsByAuthor = allFetchedItems.filter(post => 
+            // AHORA el filtro de author es explícito: post.author debe ser el USERNAME_TO_FETCH
+            post.author === USERNAME_TO_FETCH && 
+            (!post.reblogged_by || post.reblogged_by.length === 0) 
+        );
         
-        // Seleccionamos los primeros POSTS_PER_PAGE posts originales para el display inicial.
-        initialPosts = originalPosts.slice(0, POSTS_PER_PAGE); 
+        initialPosts = strictlyOriginalPostsByAuthor.slice(0, POSTS_PER_PAGE); 
 
-        // --- Determinación de la paginación ---
-        // Ahora, la paginación se basa en los posts *originales* que encontramos.
-        if (originalPosts.length <= POSTS_PER_PAGE || initialPosts.length < POSTS_PER_PAGE) {
-            // Si el número de posts originales es menor o igual al límite, o si no pudimos llenar la primera página,
-            // asumimos que no hay más posts originales para cargar.
+        if (strictlyOriginalPostsByAuthor.length <= POSTS_PER_PAGE || initialPosts.length < POSTS_PER_PAGE) {
             initialPostsHasMore = false;
         } else {
-            // Si hay suficientes posts originales, el nextStart será el último de nuestro lote inicial.
+            // El nextStart será el último de nuestro lote INICIAL de posts filtrados.
             const lastItemInInitialPosts = initialPosts[initialPosts.length - 1];
             initialPostsNextStartAuthor = lastItemInInitialPosts.author;
             initialPostsNextStartPermlink = lastItemInInitialPosts.permlink;
             initialPostsHasMore = true;
         }
         
-        console.log("ASTRO SERVER: Posts originales iniciales cargados:", initialPosts.length, "HasMore:", initialPostsHasMore, "Next:", initialPostsNextStartPermlink);
+        console.log("ASTRO SERVER: Posts originales por autor cargados:", initialPosts.length, "HasMore:", initialPostsHasMore, "Next:", initialPostsNextStartPermlink);
     } else {
         console.error("ASTRO SERVER: No se pudieron cargar los posts originales iniciales desde Hive.", fetchError);
         initialPostsHasMore = false;
@@ -101,7 +97,6 @@ try {
     <title>Blog de Hive de @{USERNAME_TO_FETCH}</title>
     <link rel="stylesheet" href="/styles/global.css">
     <style>
-        /* Estilos básicos para el botón de cargar más */
         .load-more-container {
             text-align: center;
             margin-top: 30px;
@@ -156,7 +151,6 @@ try {
 
     <script src="../scripts/theme.js"></script>
     <script>
-        // Script de paginación simplificado para "solo posts originales"
         document.addEventListener('DOMContentLoaded', () => {
             const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
             
@@ -169,7 +163,6 @@ try {
             let nextStartPermlink = postsContentDiv.dataset.nextStartPermlink || '';
             let hasMorePosts = postsContentDiv.dataset.hasMorePosts === 'true';
 
-            // Función para renderizar los posts en el contenedor especificado.
             const renderPosts = (posts) => {
                 posts.forEach(post => {
                     const postCard = document.createElement('div');
@@ -199,7 +192,6 @@ try {
                     const url = new URL(`${FUNCTIONS_BASE_URL}/get-user-posts`);
                     url.searchParams.append('username', username);
                     url.searchParams.append('limit', postsPerPage); 
-                    // No necesitamos contentType aquí si la función siempre filtra posts originales.
                     
                     if (nextStartAuthor && nextStartPermlink) {
                         url.searchParams.append('start_author', nextStartAuthor);
