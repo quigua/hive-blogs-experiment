@@ -2,11 +2,8 @@
 const Redis = require('ioredis');
 const fetch = require('node-fetch');
 
-// Declare redisClient globally but do NOT initialize it here with 'new Redis()'
-// The initialization happens inside the async handler.
 let redisClient = null; 
 
-// Helper function to check if a post is "old" (immutable)
 function isOldPost(createdDate) {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -14,16 +11,13 @@ function isOldPost(createdDate) {
 }
 
 exports.handler = async (event, context) => {
-    // Define the timeout for each invocation to ensure it applies
     const timeoutPromise = new Promise((resolve, reject) => {
         setTimeout(() => {
             reject(new Error('Function execution timed out before completing.'));
-        }, 9000); // 9 seconds, a bit less than Netlify's timeout
+        }, 9000); 
     });
 
     try {
-        // --- Redis initialization/re-use logic within the handler ---
-        // All logic involving 'new Redis()' and 'redisClient.status' must be here.
         if (!redisClient || redisClient.status === 'end' || redisClient.status === 'wait') {
             console.log('[ioredis] Initializing or re-establishing Redis connection...');
             const redisUrl = process.env.UPSTASH_REDIS_URL;
@@ -40,16 +34,14 @@ exports.handler = async (event, context) => {
 
             redisClient = new Redis(redisUrl, { password: redisPassword, tls: {} });
             
-            // Attach listeners only once per new instance to prevent duplicates on 'warm' reuses.
             if (!redisClient.__listenersAttached) {
                 redisClient.on('error', (err) => console.error('[ioredis] Connection or operation error:', err.message, err.code, err.address));
                 redisClient.on('connect', () => console.log('[ioredis] Connected to Redis!'));
                 redisClient.on('reconnecting', () => console.warn('[ioredis] Reconnecting to Redis...'));
                 redisClient.on('end', () => { console.warn('[ioredis] Redis connection terminated. Resetting client.'); redisClient = null; });
-                redisClient.__listenersAttached = true; // Mark that listeners have been attached
+                redisClient.__listenersAttached = true;
             }
         }
-        // --- End of Redis logic ---
 
         const { username, limit, start_author, start_permlink, contentType = 'posts' } = event.queryStringParameters;
         const parsedLimit = parseInt(limit);
@@ -83,8 +75,7 @@ exports.handler = async (event, context) => {
         }
         console.log(`Cache MISS for key: ${cacheKey}. Fetching from Hive.`);
 
-        // EL CAMBIO CLAVE: Ajustamos el límite máximo a 20 para la API de Hive.
-        // La API de Hive tiene un límite de 20. Pedimos el máximo para tener un buen buffer.
+        // Siempre pedimos 20, el máximo.
         const requestLimitToHive = 20; 
 
         const body = {
@@ -93,7 +84,7 @@ exports.handler = async (event, context) => {
             method: 'condenser_api.get_discussions_by_blog',
             params: [{
                 tag: username,
-                limit: requestLimitToHive, // Esto será 20
+                limit: requestLimitToHive, 
                 start_author: start_author || undefined,
                 start_permlink: start_permlink || undefined,
             }],
@@ -141,64 +132,56 @@ exports.handler = async (event, context) => {
 
         const allFetchedItems = hiveData.result || [];
 
-        // --- Initial filtering for reblogs/posts ---
-        const typeFilteredItems = allFetchedItems.filter(item => {
-            if (contentType === 'posts') {
-                return !item.reblogged_by || item.reblogged_by.length === 0;
-            } else if (contentType === 'reblogs') {
-                return item.reblogged_by && item.reblogged_by.length > 0;
-            }
-            return true; // If contentType is unknown, do not filter
-        });
+        // --- FILTRADO Y EXTRACCIÓN DE ELEMENTOS ---
+        // Separamos los items según el contentType solicitado.
+        const filteredAndCleanedItems = [];
+        let skippedInitialDuplicate = false;
 
-        // --- Remove the first element if it's the start_permlink (duplicate) ---
-        let cleanedItems = typeFilteredItems;
-        if (start_author && start_permlink && typeFilteredItems.length > 0 &&
-            typeFilteredItems[0].author === start_author &&
-            typeFilteredItems[0].permlink === start_permlink) {
-            cleanedItems = typeFilteredItems.slice(1);
+        for (const item of allFetchedItems) {
+            // Si hay un start_author/permlink y este item es el duplicado inicial, lo saltamos.
+            if (!skippedInitialDuplicate && start_author && start_permlink && 
+                item.author === start_author && item.permlink === start_permlink) {
+                skippedInitialDuplicate = true;
+                continue; // Saltar este item duplicado
+            }
+
+            // Aplicar el filtro de contentType
+            if (contentType === 'posts' && (!item.reblogged_by || item.reblogged_by.length === 0)) {
+                filteredAndCleanedItems.push(item);
+            } else if (contentType === 'reblogs' && item.reblogged_by && item.reblogged_by.length > 0) {
+                filteredAndCleanedItems.push(item);
+            }
+            // Si el contentType no es 'posts' ni 'reblogs', o no coincide el filtro, no se añade.
         }
 
-        // --- Select only the posts/reblogs for the current page (parsedLimit) ---
-        const currentBatchItems = cleanedItems.slice(0, parsedLimit);
+        // Tomamos solo la cantidad necesaria para el lote actual.
+        const currentBatchItems = filteredAndCleanedItems.slice(0, parsedLimit);
 
-        // --- Determine parameters for the next pagination ---
-        // We look for the element immediately AFTER the last element
-        // of the current batch *in the original unfiltered Hive list*, not the filtered one.
+        // --- DETERMINACIÓN DE LA PRÓXIMA PÁGINA (nextStartAuthor/Permlink) ---
         let nextStartAuthor = null;
         let nextStartPermlink = null;
         let hasMore = true;
 
         if (currentBatchItems.length < parsedLimit) {
-            // If the current batch is less than the limit, there are no more posts of this *type filtered*.
+            // Si no tenemos un lote completo después de filtrar, asumimos que no hay más del tipo solicitado.
             hasMore = false;
         } else {
-            // If we have a full batch, we need to determine the start_author/permlink
-            // for the next batch. This should be the post that follows the last item of our current batch
-            // IN THE COMPLETE ORIGINAL LIST OBTAINED FROM HIVE (allFetchedItems).
-
-            const lastItemInCurrentBatch = currentBatchItems[currentBatchItems.length - 1];
-            
-            // Find the index of this 'last item in the current batch' within the original Hive list.
-            const indexOfLastItemInOriginal = allFetchedItems.findIndex(item => 
-                item.author === lastItemInCurrentBatch.author && 
-                item.permlink === lastItemInCurrentBatch.permlink
-            );
-
-            // If the last item of our filtered batch was found in the original list,
-            // and there's an element after it in the original list, that's our next starting point.
-            if (indexOfLastItemInOriginal !== -1 && (indexOfLastItemInOriginal + 1) < allFetchedItems.length) {
-                const nextItemFromOriginal = allFetchedItems[indexOfLastItemInOriginal + 1];
-                nextStartAuthor = nextItemFromOriginal.author;
-                nextStartPermlink = nextItemFromOriginal.permlink;
+            // Si tenemos un lote completo, el 'start' para la próxima llamada A HIVE
+            // debe ser el post que sigue al ÚLTIMO post del batch ORIGINAL de Hive.
+            // Esto asegura que siempre avanzamos cronológicamente.
+            const lastItemOriginal = allFetchedItems[allFetchedItems.length - 1];
+            if (lastItemOriginal) { // Asegurarse de que el array no esté vacío
+                nextStartAuthor = lastItemOriginal.author;
+                nextStartPermlink = lastItemOriginal.permlink;
+                // Si la cantidad de items devueltos por Hive fue menor que 20, no hay más.
+                if (allFetchedItems.length < requestLimitToHive) {
+                    hasMore = false;
+                }
             } else {
-                // If the last item of our batch was not found or is the last of the original list obtained,
-                // it means there are no more elements beyond what Hive gave us.
-                hasMore = false;
+                hasMore = false; // Si no hay items originales, no hay más.
             }
         }
-
-        // --- The final response includes the posts, and if there are more and the new start_author/permlink ---
+        
         const responseData = {
             posts: currentBatchItems,
             nextStartAuthor: nextStartAuthor,
@@ -206,7 +189,6 @@ exports.handler = async (event, context) => {
             hasMore: hasMore
         };
         
-        // Only cache if there are posts
         if (currentBatchItems.length > 0) { 
             const cacheDuration = allFetchedItems.every(item => isOldPost(item.created)) ? 60 * 60 * 24 * 30 : 60 * 5;
             try {
@@ -230,6 +212,6 @@ exports.handler = async (event, context) => {
             body: JSON.stringify({ error: 'Internal server error', details: error.message }),
         };
     } finally {
-        // We do not call redisClient.quit() here.
+        // No llamamos a redisClient.quit() aquí.
     }
 };
