@@ -2,34 +2,39 @@
 const Redis = require('ioredis');
 const fetch = require('node-fetch');
 
-// Asegúrate de que UPSTASH_REDIS_URL es una URL completa con el formato rediss://:password@host:port
 const redisUrl = process.env.UPSTASH_REDIS_URL;
 const redisPassword = process.env.UPSTASH_REDIS_PASSWORD;
 
-if (!redisUrl) {
-    console.error("ERROR: UPSTASH_REDIS_URL no está configurada.");
-}
-if (!redisPassword) {
-    console.error("ERROR: UPSTASH_REDIS_PASSWORD no está configurada.");
-}
+// Declara la instancia de Redis fuera del handler para posible reutilización
+// pero con un mecanismo de conexión/reconexión robusto.
+let redis = null;
 
-const redis = new Redis(redisUrl, {
-    password: redisPassword,
-    tls: {}
-});
+function getRedisClient() {
+    if (!redis || redis.status === 'end' || redis.status === 'wait') { // Check if connection needs to be re-established
+        console.log('[ioredis] Initializing or re-establishing Redis connection...');
+        redis = new Redis(redisUrl, {
+            password: redisPassword,
+            tls: {}
+        });
 
-redis.on('error', (err) => {
-    console.error('[ioredis] Error de conexión o operación:', err.message, err.code, err.address);
-});
-redis.on('connect', () => {
-    console.log('[ioredis] Conectado a Redis!');
-});
-redis.on('reconnecting', () => {
-    console.warn('[ioredis] Reconectando a Redis...');
-});
-redis.on('end', () => {
-    console.warn('[ioredis] Conexión a Redis terminada.');
-});
+        redis.on('error', (err) => {
+            console.error('[ioredis] Error de conexión o operación:', err.message, err.code, err.address);
+            // Optionally, try to reconnect here or let ioredis handle it
+        });
+        redis.on('connect', () => {
+            console.log('[ioredis] Conectado a Redis!');
+        });
+        redis.on('reconnecting', () => {
+            console.warn('[ioredis] Reconectando a Redis...');
+        });
+        redis.on('end', () => {
+            console.warn('[ioredis] Conexión a Redis terminada (fuera de control).');
+            // Reset redis instance so it gets re-initialized on next invocation
+            redis = null; 
+        });
+    }
+    return redis;
+}
 
 function isOldPost(createdDate) {
     const sevenDaysAgo = new Date();
@@ -38,14 +43,17 @@ function isOldPost(createdDate) {
 }
 
 exports.handler = async (event, context) => {
+    // Definimos el timeout por cada invocación para asegurarnos que se aplica
     const timeoutPromise = new Promise((resolve, reject) => {
         setTimeout(() => {
             reject(new Error('Function execution timed out before completing.'));
         }, 9000); // 9 segundos, un poco menos que el timeout de Netlify
     });
 
+    // Obtener la instancia de Redis al inicio de cada invocación
+    const currentRedis = getRedisClient();
+
     try {
-        // --- CAMBIO CLAVE AQUÍ: Añadimos 'contentType' ---
         const { username, limit, start_author, start_permlink, contentType = 'posts' } = event.queryStringParameters;
 
         if (!username || !limit) {
@@ -62,14 +70,15 @@ exports.handler = async (event, context) => {
         ];
         const randomNode = hiveNodes[Math.floor(Math.random() * hiveNodes.length)];
 
-        // --- CAMBIO CLAVE AQUÍ: La clave de caché ahora incluye el tipo de contenido ---
         const cacheKey = `hive:${contentType}:${username}:${limit}:${start_author || 'null'}:${start_permlink || 'null'}`;
         
         let cachedResponse = null;
         try {
-            cachedResponse = await Promise.race([redis.get(cacheKey), timeoutPromise]);
+            // Usa la instancia actual de Redis
+            cachedResponse = await Promise.race([currentRedis.get(cacheKey), timeoutPromise]);
         } catch (redisErr) {
             console.error(`Error al intentar obtener de Redis para ${cacheKey}:`, redisErr);
+            // Continúa sin caché si hay un error en Redis
         }
        
         if (cachedResponse) {
@@ -88,7 +97,7 @@ exports.handler = async (event, context) => {
             method: 'condenser_api.get_discussions_by_blog',
             params: [{
                 tag: username,
-                limit: parseInt(limit), // El límite ahora es el total que pide Hive
+                limit: parseInt(limit), 
                 start_author: start_author || undefined,
                 start_permlink: start_permlink || undefined,
             }],
@@ -118,7 +127,7 @@ exports.handler = async (event, context) => {
             };
         }
 
-        const allFetchedItems = hiveData.result || []; // Ahora obtenemos todos los items posibles
+        const allFetchedItems = hiveData.result || [];
 
         let finalItems = [];
         if (contentType === 'posts') {
@@ -126,25 +135,21 @@ exports.handler = async (event, context) => {
         } else if (contentType === 'reblogs') {
             finalItems = allFetchedItems.filter(item => item.reblogged_by && item.reblogged_by.length > 0);
         } else {
-            // Si el contentType es desconocido, devolvemos todo (o un error)
             finalItems = allFetchedItems; 
         }
-
-        // Importante: No aplicamos el límite aquí, ya que Hive ya lo hizo.
-        // La paginación en el cliente manejará qué mostrar.
         
         const allItemsAreOld = finalItems.every(item => isOldPost(item.created));
 
         if (allItemsAreOld && finalItems.length > 0) { 
             try {
-                await Promise.race([redis.set(cacheKey, JSON.stringify({ posts: finalItems }), 'EX', 60 * 60 * 24 * 30), timeoutPromise]); 
+                await Promise.race([currentRedis.set(cacheKey, JSON.stringify({ posts: finalItems }), 'EX', 60 * 60 * 24 * 30), timeoutPromise]); 
                 console.log(`Cache SET para clave: ${cacheKey} (${contentType} viejos, filtrados).`);
             } catch (redisErr) {
                 console.error(`Error al intentar guardar en Redis (${contentType} viejos) ${cacheKey}:`, redisErr);
             }
         } else if (finalItems.length > 0) { 
             try {
-                await Promise.race([redis.set(cacheKey, JSON.stringify({ posts: finalItems }), 'EX', 60 * 5), timeoutPromise]); 
+                await Promise.race([currentRedis.set(cacheKey, JSON.stringify({ posts: finalItems }), 'EX', 60 * 5), timeoutPromise]); 
                 console.log(`Cache SET para clave: ${cacheKey} (${contentType} recientes, filtrados).`);
             } catch (redisErr) {
                 console.error(`Error al intentar guardar en Redis (${contentType} recientes) ${cacheKey}:`, redisErr);
@@ -154,7 +159,7 @@ exports.handler = async (event, context) => {
         return {
             statusCode: 200,
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ posts: finalItems }), // Devuelve los ítems filtrados
+            body: JSON.stringify({ posts: finalItems }),
         };
 
     } catch (error) {
@@ -164,9 +169,8 @@ exports.handler = async (event, context) => {
             body: JSON.stringify({ error: 'Error interno del servidor', details: error.message }),
         };
     } finally {
-        if (redis && redis.status === 'ready') {
-            redis.quit();
-            console.log('[ioredis] Conexión Redis cerrada.');
-        }
+        // En este patrón, no llamamos a redis.quit() aquí.
+        // Permitimos que la conexión sea gestionada por el entorno de la función para posibles reutilizaciones.
+        // Netlify/Lambda limpiarán la conexión cuando la instancia de la función se "congele".
     }
 };
