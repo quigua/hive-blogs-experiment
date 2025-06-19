@@ -9,6 +9,9 @@ const USERNAME_TO_FETCH = 'quigua';
 const POSTS_PER_PAGE = 10;
 
 let initialPosts = [];
+let nextStartAuthor = '';
+let nextStartPermlink = '';
+let hasMorePosts = true; // Asumimos que hay más posts al inicio
 
 try {
     const response = await fetch(`${FUNCTIONS_BASE_URL}/get-user-posts?username=${USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}`);
@@ -16,12 +19,26 @@ try {
 
     if (data.error) {
         console.error("Error al cargar posts iniciales (server-side):", data.error, data.details);
-    } else {
+    } else if (data.posts && Array.isArray(data.posts)) {
         initialPosts = data.posts;
         console.log("Posts iniciales cargados (server-side):", initialPosts.length);
+
+        // Lógica de paginación: si se cargaron menos de POSTS_PER_PAGE, no hay más.
+        if (initialPosts.length < POSTS_PER_PAGE) {
+            hasMorePosts = false;
+        } else {
+            // Si cargamos POSTS_PER_PAGE posts, el último es el punto de inicio para la siguiente página
+            const lastPost = initialPosts[initialPosts.length - 1];
+            nextStartAuthor = lastPost.author;
+            nextStartPermlink = lastPost.permlink;
+        }
+    } else {
+        console.warn("La respuesta de la función no contiene un array 'posts' válido:", data);
+        hasMorePosts = false; // Si no hay posts o formato inválido, no hay más
     }
 } catch (error) {
     console.error("Error al conectar con la función Netlify para posts iniciales (server-side):", error);
+    hasMorePosts = false; // En caso de error, asumimos que no hay más posts cargables
 }
 ---
 <!DOCTYPE html>
@@ -35,7 +52,13 @@ try {
     <button id="theme-toggle">Activar Modo Oscuro</button>
     <h1>Posts de Hive de @{USERNAME_TO_FETCH}</h1>
 
-    <div id="posts-list">
+    <div id="posts-list"
+        data-username={USERNAME_TO_FETCH}
+        data-posts-per-page={POSTS_PER_PAGE}
+        data-next-start-author={nextStartAuthor}
+        data-next-start-permlink={nextStartPermlink}
+        data-has-more-posts={hasMorePosts}
+    >
         <h2>Últimos Posts</h2>
         <div class="post-list">
             {initialPosts.length === 0 ? (
@@ -46,7 +69,14 @@ try {
                 ))
             )}
         </div>
+        {# Botón para cargar más posts, visible solo si hay más posts #}
+        {hasMorePosts && (
+            <button id="load-more-button">Cargar más posts</button>
+        )}
+        <p id="no-more-posts-message" style="display: {hasMorePosts ? 'none' : 'block'};">No hay más posts para cargar.</p>
     </div>
+
     <script src="../scripts/theme.js"></script>
+    <script src="../scripts/pagination.js"></script> {# ¡NUEVO SCRIPT PARA PAGINACIÓN! #}
 </body>
 </html>
