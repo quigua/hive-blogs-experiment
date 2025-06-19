@@ -153,4 +153,39 @@ let initialReblogsHasMore = true;
         data-posts-per-page={POSTS_PER_PAGE}
         data-next-start-author={initialPostsNextStartAuthor}
         data-next-start-permlink={initialPostsNextStartPermlink}
-        data-has-more-posts={initialPosts
+        data-has-more-posts={initialPostsHasMore}
+    >
+        <div class="post-list">
+            {initialPosts.length === 0 ? (
+                <p>No se encontraron posts originales o hubo un error al cargar.</p>
+            ) : (
+                initialPosts.map(post => (
+                    <PostCard post={post} />
+                ))
+            )}
+        </div>
+        {initialPostsHasMore && (
+            <button class="load-more-button">Cargar más posts</button>
+        )}
+        <p class="no-more-posts-message" style="display: {initialPostsHasMore ? 'none' : 'block'};">No hay más posts para cargar.</p>
+    </div>
+
+    <div id="reblogs-tab-content" class="tab-content"
+        data-content-type="reblogs"
+        data-username={USERNAME_TO_FETCH}
+        data-posts-per-page={POSTS_PER_PAGE}
+        data-next-start-author="" 
+        data-next-start-permlink="" 
+        data-has-more-posts="true"
+    >
+        <div class="post-list">
+            <p>Haz clic en "Cargar más reblogs" para ver el contenido.</p>
+        </div>
+        <button class="load-more-button">Cargar más reblogs</button>
+        <p class="no-more-posts-message" style="display: none;">No hay más reblogs para cargar.</p>
+    </div>
+
+    <script src="../scripts/theme.js"></script>
+    <script src="../scripts/pagination.js"></script>
+</body>
+</html>
