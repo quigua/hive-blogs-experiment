@@ -4,7 +4,6 @@ const fetch = require('node-fetch');
 
 let redisClient = null; 
 
-// Helper function to check if a post is "old" (immutable)
 function isOldPost(createdDate) {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -57,8 +56,8 @@ exports.handler = async (event, context) => {
             'https://api.pharesim.me'
         ];
         
-        // La clave del caché ahora se enfoca solo en posts originales, ya que es el único tipo.
-        const cacheKey = `hive:posts:${username}:${parsedLimit}:${start_author || 'null'}:${start_permlink || 'null'}`;
+        // La clave del caché ahora es específica para posts *originales del autor*, sin depender del contentType.
+        const cacheKey = `hive:author_posts:${username}:${parsedLimit}:${start_author || 'null'}:${start_permlink || 'null'}`;
         
         let cachedResponse = null;
         try {
@@ -77,7 +76,6 @@ exports.handler = async (event, context) => {
         }
         console.log(`Cache MISS for key: ${cacheKey}. Fetching from Hive.`);
 
-        // Siempre pedimos 20, el máximo, para tener un buen buffer de posts para filtrar.
         const requestLimitToHive = 20; 
 
         const body = {
@@ -85,7 +83,7 @@ exports.handler = async (event, context) => {
             id: 1,
             method: 'condenser_api.get_discussions_by_blog',
             params: [{
-                tag: username,
+                tag: username, // Seguimos pidiendo por el tag del usuario.
                 limit: requestLimitToHive, 
                 start_author: start_author || undefined,
                 start_permlink: start_permlink || undefined,
@@ -134,38 +132,35 @@ exports.handler = async (event, context) => {
 
         const allFetchedItems = hiveData.result || [];
 
-        // --- FILTRADO EXCLUSIVO PARA POSTS ORIGINALES ---
-        // Filtramos y quitamos el duplicado inicial si start_author/permlink fueron provistos.
-        const originalPosts = [];
+        // --- FILTRADO ESTRICTO: Solo posts donde el autor es el 'username' buscado y no es un reblog ---
+        const strictlyOriginalPostsByAuthor = [];
         let skippedInitialDuplicate = false;
 
         for (const item of allFetchedItems) {
             if (!skippedInitialDuplicate && start_author && start_permlink && 
                 item.author === start_author && item.permlink === start_permlink) {
                 skippedInitialDuplicate = true;
-                continue; // Saltar este item duplicado
+                continue; 
             }
 
-            // Solo añadir si es un post original (no tiene reblogged_by o está vacío)
-            if (!item.reblogged_by || item.reblogged_by.length === 0) {
-                originalPosts.push(item);
+            // AÑADIR LA CONDICIÓN: El autor del post debe coincidir con el 'username' solicitado
+            if (item.author === username && (!item.reblogged_by || item.reblogged_by.length === 0)) {
+                strictlyOriginalPostsByAuthor.push(item);
             }
         }
 
-        // Tomamos solo la cantidad necesaria para el lote actual (parsedLimit).
-        const currentBatchItems = originalPosts.slice(0, parsedLimit);
+        // Tomamos solo la cantidad necesaria para el lote actual.
+        const currentBatchItems = strictlyOriginalPostsByAuthor.slice(0, parsedLimit);
 
         // --- DETERMINACIÓN DE LA PRÓXIMA PÁGINA (nextStartAuthor/Permlink) ---
-        // La paginación se basa en los posts *originales* que hemos logrado filtrar.
+        // La paginación se basa en los posts *originales del autor* que logramos obtener.
         let nextStartAuthor = null;
         let nextStartPermlink = null;
         let hasMore = true;
 
         if (currentBatchItems.length < parsedLimit) {
-            // Si el lote actual es menor que lo pedido, asumimos que no hay más posts originales.
             hasMore = false;
         } else {
-            // Si tenemos un lote completo, el siguiente punto de inicio es el último de este lote filtrado.
             const lastItem = currentBatchItems[currentBatchItems.length - 1];
             nextStartAuthor = lastItem.author;
             nextStartPermlink = lastItem.permlink;
@@ -179,13 +174,11 @@ exports.handler = async (event, context) => {
             hasMore: hasMore
         };
         
-        // Solo cacheamos si tenemos posts para devolver.
         if (currentBatchItems.length > 0) { 
-            // La duración del caché dependerá de si los posts son viejos o nuevos.
             const cacheDuration = currentBatchItems.every(item => isOldPost(item.created)) ? 60 * 60 * 24 * 30 : 60 * 5;
             try {
                 await Promise.race([redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', cacheDuration), timeoutPromise]); 
-                console.log(`Cache SET for key: ${cacheKey} (Posts originales, duración: ${cacheDuration / 60} min).`);
+                console.log(`Cache SET for key: ${cacheKey} (Posts originales de autor, duración: ${cacheDuration / 60} min).`);
             } catch (redisErr) {
                 console.error(`Error trying to save to Redis ${cacheKey}:`, redisErr);
             }
