@@ -1,17 +1,26 @@
 // netlify/functions/get-user-posts.js
-const Redis = require('ioredis'); // Importa el cliente Redis
-const fetch = require('node-fetch'); // Asumiendo que ya usas node-fetch para la API de Hive
+const Redis = require('ioredis');
+const fetch = require('node-fetch');
 
-// Configura la conexión a Redis usando las variables de entorno de Netlify
-// Asegúrate de que estas variables estén configuradas en Netlify
-const redis = new Redis({
-    port: 6380, // Puerto estándar para Redis sobre SSL/TLS
-    host: process.env.UPSTASH_REDIS_URL.split('rediss://')[1], // Extrae el host de la URL
-    password: process.env.UPSTASH_REDIS_PASSWORD,
+// Configura la conexión a Redis usando la URL completa de las variables de entorno de Netlify
+// ¡Asegúrate de que UPSTASH_REDIS_URL sea la URL completa (ej. rediss://[host]:[port])!
+const redis = new Redis(process.env.UPSTASH_REDIS_URL, {
+    password: process.env.UPSTASH_REDIS_PASSWORD, // Algunas URLs de Upstash ya incluyen la contraseña
+                                                  // pero especificarla explícitamente es más seguro si tu URL no lo hace.
     tls: {
-        rejectUnauthorized: false // Puede ser necesario para algunos entornos serverless
+        rejectUnauthorized: false // Esto a veces es necesario en Netlify por temas de certificados
     }
 });
+
+// **Importante:** Añade un manejador de errores para ioredis, así no se bloquea la función en despliegue
+// Esto te ayudará a ver errores de conexión sin que Netlify cierre la función.
+redis.on('error', (err) => {
+    console.error('[ioredis] Error de conexión o operación:', err);
+});
+redis.on('connect', () => {
+    console.log('[ioredis] Conectado a Redis!');
+});
+
 
 // Función auxiliar para calcular si un post es "viejo" (inmutable)
 function isOldPost(createdDate) {
@@ -38,24 +47,19 @@ exports.handler = async (event, context) => {
         ];
         const randomNode = hiveNodes[Math.floor(Math.random() * hiveNodes.length)];
 
-        // Construir la clave de caché. Una clave simple podría ser el usuario y el offset/limit.
-        // Para posts individuales, la clave podría ser `hive:post:${author}:${permlink}`
-        // Para listas de posts, una clave basada en los parámetros de la consulta es buena.
         const cacheKey = `hive:posts:${username}:${limit}:${start_author || 'null'}:${start_permlink || 'null'}`;
         
         // 1. Intentar obtener de la caché
-        const cachedResponse = await redis.get(cacheKey);
+        let cachedResponse = null;
+        try {
+            cachedResponse = await redis.get(cacheKey);
+        } catch (redisErr) {
+            console.error(`Error al intentar obtener de Redis para ${cacheKey}:`, redisErr);
+            // Continúa sin caché si hay un error en Redis
+        }
+       
         if (cachedResponse) {
             console.log(`Cache HIT para clave: ${cacheKey}`);
-            // Verificar si el caché contiene solo posts viejos.
-            // Si la respuesta cacheada es solo de posts > 7 días, es un hit válido.
-            // Para simplicidad, si la clave existe, asumimos que es válida para este ejemplo.
-            // En una implementación más avanzada, podrías guardar un timestamp en la caché.
-            const parsedData = JSON.parse(cachedResponse);
-            
-            // Si todos los posts en este lote cacheado son viejos, podemos usarlo directamente.
-            // Si hubiera mezcla de posts nuevos y viejos, la lógica se complica,
-            // pero para un `limit` dado y `start_author/permlink`, un solo cache key es suficiente.
             return {
                 statusCode: 200,
                 headers: { 'Content-Type': 'application/json' },
@@ -101,20 +105,22 @@ exports.handler = async (event, context) => {
         const posts = hiveData.result || [];
 
         // Lógica de caché:
-        // Cachear solo si todos los posts en esta respuesta son "viejos" (más de 7 días).
-        // Si hay algún post "nuevo", no cacheamos este lote para asegurar frescura.
         const allPostsAreOld = posts.every(post => isOldPost(post.created));
 
         if (allPostsAreOld && posts.length > 0) {
-            // Guardar en caché con una expiración muy larga (ej. 30 días, o -1 para nunca expirar)
-            // Ya que son inmutables, podríamos no ponerle TTL (o un TTL muy largo)
-            await redis.set(cacheKey, JSON.stringify({ posts }), 'EX', 60 * 60 * 24 * 30); // 30 días de caché
-            console.log(`Cache SET para clave: ${cacheKey} (posts viejos).`);
+            try {
+                await redis.set(cacheKey, JSON.stringify({ posts }), 'EX', 60 * 60 * 24 * 30); // 30 días de caché
+                console.log(`Cache SET para clave: ${cacheKey} (posts viejos).`);
+            } catch (redisErr) {
+                console.error(`Error al intentar guardar en Redis (posts viejos) ${cacheKey}:`, redisErr);
+            }
         } else if (posts.length > 0) {
-            // Si hay posts nuevos en el lote, cachear por un período muy corto (ej. 5 minutos)
-            // para reducir hits rápidos, pero permitir que se actualice.
-            await redis.set(cacheKey, JSON.stringify({ posts }), 'EX', 60 * 5); // 5 minutos de caché
-            console.log(`Cache SET para clave: ${cacheKey} (posts recientes).`);
+            try {
+                await redis.set(cacheKey, JSON.stringify({ posts }), 'EX', 60 * 5); // 5 minutos de caché
+                console.log(`Cache SET para clave: ${cacheKey} (posts recientes).`);
+            } catch (redisErr) {
+                console.error(`Error al intentar guardar en Redis (posts recientes) ${cacheKey}:`, redisErr);
+            }
         }
         
         return {
