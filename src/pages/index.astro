@@ -21,8 +21,9 @@ const hiveNodes = [
 
 try {
     let hiveData = null;
-    let hiveResponse = null;
     let fetchError = null;
+
+    // EL CAMBIO CLAVE: Aseguramos que el límite de solicitud a Hive es 20.
     const requestLimitToHive = 20; 
 
     for (const nodeUrl of hiveNodes) {
@@ -38,10 +39,9 @@ try {
                 }),
             });
             if (response.ok) {
-                hiveResponse = response;
                 hiveData = await response.json();
                 if (!hiveData.error) {
-                    fetchError = null; // Éxito en la obtención de datos
+                    fetchError = null; 
                     break;
                 } else {
                     fetchError = new Error(`ASTRO SERVER: Error de la API de Hive en ${nodeUrl}: ${JSON.stringify(hiveData.error)}`);
@@ -58,19 +58,34 @@ try {
     }
 
     if (hiveData && !hiveData.error && hiveData.result) {
-        const fetchedPosts = hiveData.result || [];
-        const filteredInitialPosts = fetchedPosts.filter(post => !post.reblogged_by || post.reblogged_by.length === 0);
+        const allFetchedItems = hiveData.result || [];
+        // Filtramos para posts originales
+        const typeFilteredItems = allFetchedItems.filter(post => !post.reblogged_by || post.reblogged_by.length === 0);
         
-        initialPosts = filteredInitialPosts.slice(0, POSTS_PER_PAGE); // Tomar solo los primeros 10 posts originales
+        // Seleccionamos los primeros 10 posts
+        initialPosts = typeFilteredItems.slice(0, POSTS_PER_PAGE); 
 
-        console.log("ASTRO SERVER: Posts originales iniciales cargados:", initialPosts.length);
+        // Determinamos la paginación para la *próxima* llamada, usando la lista original de Hive.
         if (initialPosts.length < POSTS_PER_PAGE) {
             initialPostsHasMore = false;
         } else {
-            const lastPost = initialPosts[initialPosts.length - 1];
-            initialPostsNextStartAuthor = lastPost.author;
-            initialPostsNextStartPermlink = lastPost.permlink;
+            const lastItemInCurrentBatch = initialPosts[initialPosts.length - 1];
+            // Encontrar el índice del último post *mostrado* en el array *completo sin filtrar* de Hive.
+            const indexOfLastItemInOriginal = allFetchedItems.findIndex(item => 
+                item.author === lastItemInCurrentBatch.author && 
+                item.permlink === lastItemInCurrentBatch.permlink
+            );
+
+            // Si se encontró el post y hay un siguiente post en la lista original de Hive, ese es nuestro punto de inicio.
+            if (indexOfLastItemInOriginal !== -1 && (indexOfLastItemInOriginal + 1) < allFetchedItems.length) {
+                const nextItemFromOriginal = allFetchedItems[indexOfLastItemInOriginal + 1];
+                initialPostsNextStartAuthor = nextItemFromOriginal.author;
+                initialPostsNextStartPermlink = nextItemFromOriginal.permlink;
+            } else {
+                initialPostsHasMore = false;
+            }
         }
+        console.log("ASTRO SERVER: Posts originales iniciales cargados:", initialPosts.length, "HasMore:", initialPostsHasMore, "Next:", initialPostsNextStartPermlink);
     } else {
         console.error("ASTRO SERVER: No se pudieron cargar los posts originales iniciales desde Hive.", fetchError);
         initialPostsHasMore = false;
@@ -80,14 +95,12 @@ try {
     initialPostsHasMore = false;
 }
 
-// --- Carga inicial de reblogs (Se inicializa vacío, se carga por JS si se selecciona la pestaña) ---
-// Para los reblogs, no los cargaremos inicialmente en el servidor para evitar doble carga.
-// Los manejaremos completamente del lado del cliente cuando se seleccione la pestaña de reblogs.
-// Dejamos variables para consistencia, pero serán actualizadas por JS.
+// Para los reblogs, no los cargaremos inicialmente en el servidor.
+// Su estado inicial indica que no se han cargado y que hay potencial para más.
 let initialReblogs = []; 
 let initialReblogsNextStartAuthor = '';
 let initialReblogsNextStartPermlink = '';
-let initialReblogsHasMore = true; // Se asume que hay más hasta que se pruebe lo contrario
+let initialReblogsHasMore = true; 
 
 ---
 <!DOCTYPE html>
@@ -140,38 +153,4 @@ let initialReblogsHasMore = true; // Se asume que hay más hasta que se pruebe l
         data-posts-per-page={POSTS_PER_PAGE}
         data-next-start-author={initialPostsNextStartAuthor}
         data-next-start-permlink={initialPostsNextStartPermlink}
-        data-has-more-posts={initialPostsHasMore}
-    >
-        <div class="post-list">
-            {initialPosts.length === 0 ? (
-                <p>No se encontraron posts originales o hubo un error al cargar.</p>
-            ) : (
-                initialPosts.map(post => (
-                    <PostCard post={post} />
-                ))
-            )}
-        </div>
-        {initialPostsHasMore && (
-            <button class="load-more-button">Cargar más posts</button>
-        )}
-        <p class="no-more-posts-message" style="display: {initialPostsHasMore ? 'none' : 'block'};">No hay más posts para cargar.</p>
-    </div>
-    
-       <div id="reblogs-tab-content" class="tab-content"
-        data-content-type="reblogs"
-        data-username={USERNAME_TO_FETCH}
-        data-posts-per-page={POSTS_PER_PAGE}
-        data-next-start-author=""
-        data-next-start-permlink=""
-        data-has-more-posts="true"
-    >
-        <div class="post-list">
-            <p>Haz clic en "Cargar más reblogs" para ver el contenido.</p> </div>
-        <button class="load-more-button">Cargar más reblogs</button>
-        <p class="no-more-posts-message" style="display: none;">No hay más reblogs para cargar.</p>
-    </div>
-
-    <script src="../scripts/theme.js"></script>
-    <script src="../scripts/pagination.js"></script>
-</body>
-</html>
+        data-has-more-posts={initialPosts

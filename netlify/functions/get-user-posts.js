@@ -83,10 +83,9 @@ exports.handler = async (event, context) => {
         }
         console.log(`Cache MISS for key: ${cacheKey}. Fetching from Hive.`);
 
-        // --- KEY CHANGE: Adjust the maximum limit to 20 for Hive API ---
-        // Hive API has a limit of 20. Request the maximum to have a good buffer.
-        // const requestLimitToHive = Math.min(parsedLimit * 2 + 1, 20); // Ensures it never exceeds 20
-        const requestLimitToHive = 20; // Simpler and safer for current needs
+        // EL CAMBIO CLAVE: Ajustamos el límite máximo a 20 para la API de Hive.
+        // La API de Hive tiene un límite de 20. Pedimos el máximo para tener un buen buffer.
+        const requestLimitToHive = 20; 
 
         const body = {
             jsonrpc: '2.0',
@@ -94,7 +93,7 @@ exports.handler = async (event, context) => {
             method: 'condenser_api.get_discussions_by_blog',
             params: [{
                 tag: username,
-                limit: requestLimitToHive, // This will be 20
+                limit: requestLimitToHive, // Esto será 20
                 start_author: start_author || undefined,
                 start_permlink: start_permlink || undefined,
             }],
@@ -171,26 +170,30 @@ exports.handler = async (event, context) => {
         let hasMore = true;
 
         if (currentBatchItems.length < parsedLimit) {
-            // If the current batch is less than the limit, there are no more posts of this type.
+            // If the current batch is less than the limit, there are no more posts of this *type filtered*.
             hasMore = false;
         } else {
-            // If we have a full batch, we look for the next "start"
-            // We want the permlink of the item that follows the last item in our batch *in the original list*
+            // If we have a full batch, we need to determine the start_author/permlink
+            // for the next batch. This should be the post that follows the last item of our current batch
+            // IN THE COMPLETE ORIGINAL LIST OBTAINED FROM HIVE (allFetchedItems).
+
             const lastItemInCurrentBatch = currentBatchItems[currentBatchItems.length - 1];
             
-            // Find the position of the last item in the current batch within the original list (allFetchedItems)
-            const lastItemIndexInOriginal = allFetchedItems.findIndex(item => 
+            // Find the index of this 'last item in the current batch' within the original Hive list.
+            const indexOfLastItemInOriginal = allFetchedItems.findIndex(item => 
                 item.author === lastItemInCurrentBatch.author && 
                 item.permlink === lastItemInCurrentBatch.permlink
             );
 
-            // If there's an item after the last item of our batch in the original list
-            if (lastItemIndexInOriginal !== -1 && (lastItemIndexInOriginal + 1) < allFetchedItems.length) {
-                const nextItem = allFetchedItems[lastItemIndexInOriginal + 1];
-                nextStartAuthor = nextItem.author;
-                nextStartPermlink = nextItem.permlink;
+            // If the last item of our filtered batch was found in the original list,
+            // and there's an element after it in the original list, that's our next starting point.
+            if (indexOfLastItemInOriginal !== -1 && (indexOfLastItemInOriginal + 1) < allFetchedItems.length) {
+                const nextItemFromOriginal = allFetchedItems[indexOfLastItemInOriginal + 1];
+                nextStartAuthor = nextItemFromOriginal.author;
+                nextStartPermlink = nextItemFromOriginal.permlink;
             } else {
-                // No more elements in Hive's response beyond our current batch
+                // If the last item of our batch was not found or is the last of the original list obtained,
+                // it means there are no more elements beyond what Hive gave us.
                 hasMore = false;
             }
         }
