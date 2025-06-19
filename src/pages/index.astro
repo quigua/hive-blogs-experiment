@@ -4,10 +4,10 @@ import PostCard from '../components/PostCard.astro';
 import '../styles/global.css';
 
 const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
-const USERNAME_TO_FETCH = 'quigua'; 
-const POSTS_PER_PAGE = 10; 
+const USERNAME_TO_FETCH = 'quigua';
+const POSTS_PER_PAGE = 10;
 
-// --- Carga inicial de posts (Originales) directamente desde Hive ---
+// --- Carga inicial de posts (Originales) en el servidor (Astro) ---
 let initialPosts = [];
 let initialPostsNextStartAuthor = '';
 let initialPostsNextStartPermlink = '';
@@ -22,8 +22,7 @@ const hiveNodes = [
 try {
     let hiveData = null;
     let fetchError = null;
-
-    const requestLimitToHive = 20; 
+    const requestLimitToHive = 20; // Siempre pedir 20 para tener buffer de filtrado.
 
     for (const nodeUrl of hiveNodes) {
         try {
@@ -34,13 +33,13 @@ try {
                     jsonrpc: '2.0',
                     id: 1,
                     method: 'condenser_api.get_discussions_by_blog',
-                    params: [{ tag: USERNAME_TO_FETCH, limit: requestLimitToHive }] 
+                    params: [{ tag: USERNAME_TO_FETCH, limit: requestLimitToHive }]
                 }),
             });
             if (response.ok) {
                 hiveData = await response.json();
                 if (!hiveData.error) {
-                    fetchError = null; 
+                    fetchError = null;
                     break;
                 } else {
                     fetchError = new Error(`ASTRO SERVER: Error de la API de Hive en ${nodeUrl}: ${JSON.stringify(hiveData.error)}`);
@@ -52,33 +51,34 @@ try {
             }
         } catch (error) {
             fetchError = new Error(`ASTRO SERVER: Error de red al conectar con ${nodeUrl}: ${error.message}`);
-            console.error(error); 
+            console.error(error);
         }
     }
 
     if (hiveData && !hiveData.error && hiveData.result) {
         const allFetchedItems = hiveData.result || [];
-        
-        // --- FILTRADO MUY ESTRICTO: Solo posts donde el autor es 'quigua' Y no es un reblog ---
-        const strictlyOriginalPostsByAuthor = allFetchedItems.filter(post => 
-            // AHORA el filtro de author es explícito: post.author debe ser el USERNAME_TO_FETCH
-            post.author === USERNAME_TO_FETCH && 
-            (!post.reblogged_by || post.reblogged_by.length === 0) 
-        );
-        
-        initialPosts = strictlyOriginalPostsByAuthor.slice(0, POSTS_PER_PAGE); 
 
-        if (strictlyOriginalPostsByAuthor.length <= POSTS_PER_PAGE || initialPosts.length < POSTS_PER_PAGE) {
+        // Filtramos aquí los posts originales del autor para la carga inicial de la pestaña.
+        const originalPosts = allFetchedItems.filter(post =>
+            post.author === USERNAME_TO_FETCH &&
+            (!post.reblogged_by || post.reblogged_by.length === 0)
+        );
+
+        initialPosts = originalPosts.slice(0, POSTS_PER_PAGE);
+
+        // La paginación para la carga inicial se basará en la lista original de Hive, no la filtrada.
+        // Esto asegura que `nextStartPermlink` siempre avance en el tiempo.
+        if (allFetchedItems.length < requestLimitToHive || allFetchedItems.length === 0) {
             initialPostsHasMore = false;
         } else {
-            // El nextStart será el último de nuestro lote INICIAL de posts filtrados.
-            const lastItemInInitialPosts = initialPosts[initialPosts.length - 1];
-            initialPostsNextStartAuthor = lastItemInInitialPosts.author;
-            initialPostsNextStartPermlink = lastItemInInitialPosts.permlink;
-            initialPostsHasMore = true;
+            const lastItemOriginal = allFetchedItems[allFetchedItems.length - 1];
+            initialPostsNextStartAuthor = lastItemOriginal.author;
+            initialPostsNextStartPermlink = lastItemOriginal.permlink;
+            initialPostsHasMore = true; // Asumimos que hay más si Hive nos dio un lote completo.
         }
-        
-        console.log("ASTRO SERVER: Posts originales por autor cargados:", initialPosts.length, "HasMore:", initialPostsHasMore, "Next:", initialPostsNextStartPermlink);
+
+        console.log("ASTRO SERVER: Posts originales iniciales cargados:", initialPosts.length, "HasMore:", initialPostsHasMore, "Next:", initialPostsNextStartPermlink);
+
     } else {
         console.error("ASTRO SERVER: No se pudieron cargar los posts originales iniciales desde Hive.", fetchError);
         initialPostsHasMore = false;
@@ -87,6 +87,13 @@ try {
     console.error("ASTRO SERVER: Error general al procesar posts iniciales:", error);
     initialPostsHasMore = false;
 }
+
+// Para los reblogs, no los cargaremos inicialmente en el servidor (Astro).
+// Su estado inicial indica que no se han cargado y que hay potencial para más.
+let initialReblogs = [];
+let initialReblogsNextStartAuthor = '';
+let initialReblogsNextStartPermlink = '';
+let initialReblogsHasMore = true;
 
 ---
 <!DOCTYPE html>
@@ -97,6 +104,32 @@ try {
     <title>Blog de Hive de @{USERNAME_TO_FETCH}</title>
     <link rel="stylesheet" href="/styles/global.css">
     <style>
+        /* Estilos básicos para las pestañas */
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #ccc;
+        }
+        .tab-button {
+            padding: 10px 15px;
+            cursor: pointer;
+            border: none;
+            background-color: transparent;
+            font-size: 1em;
+            color: #555;
+            transition: all 0.3s ease;
+        }
+        .tab-button.active {
+            border-bottom: 2px solid #007bff;
+            color: #007bff;
+            font-weight: bold;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
         .load-more-container {
             text-align: center;
             margin-top: 30px;
@@ -125,7 +158,13 @@ try {
     <button id="theme-toggle">Activar Modo Oscuro</button>
     <h1>Posts de Hive de @{USERNAME_TO_FETCH}</h1>
 
-    <div id="posts-content" 
+    <div class="tabs">
+        <button class="tab-button active" data-tab="posts">Posts Originales</button>
+        <button class="tab-button" data-tab="reblogs">Reblogs</button>
+    </div>
+
+    <div id="posts-tab-content" class="tab-content active"
+        data-content-type="posts"
         data-username={USERNAME_TO_FETCH}
         data-posts-per-page={POSTS_PER_PAGE}
         data-next-start-author={initialPostsNextStartAuthor}
@@ -149,90 +188,160 @@ try {
         </div>
     </div>
 
+    <div id="reblogs-tab-content" class="tab-content"
+        data-content-type="reblogs"
+        data-username={USERNAME_TO_FETCH}
+        data-posts-per-page={POSTS_PER_PAGE}
+        data-next-start-author=""
+        data-next-start-permlink=""
+        data-has-more-posts="true"
+    >
+        <div class="post-list">
+            <p>Haz clic en "Cargar más reblogs" para ver el contenido.</p>
+        </div>
+        <div class="load-more-container">
+            <button class="load-more-button">Cargar más reblogs</button>
+            <p class="no-more-posts-message" style="display: none;">No hay más reblogs para cargar.</p>
+        </div>
+    </div>
+
     <script src="../scripts/theme.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
-            
-            const postsContentDiv = document.getElementById('posts-content');
-            const postListDiv = postsContentDiv.querySelector('.post-list');
-            const loadMoreButton = postsContentDiv.querySelector('.load-more-button');
-            const noMoreMessage = postsContentDiv.querySelector('.no-more-posts-message');
 
-            let nextStartAuthor = postsContentDiv.dataset.nextStartAuthor || '';
-            let nextStartPermlink = postsContentDiv.dataset.nextStartPermlink || '';
-            let hasMorePosts = postsContentDiv.dataset.hasMorePosts === 'true';
+            const tabButtons = document.querySelectorAll('.tab-button');
+            const tabContents = document.querySelectorAll('.tab-content');
 
-            const renderPosts = (posts) => {
+            // Estado de paginación para cada pestaña
+            const paginationState = {
+                posts: {
+                    nextStartAuthor: document.getElementById('posts-tab-content').dataset.nextStartAuthor || '',
+                    nextStartPermlink: document.getElementById('posts-tab-content').dataset.nextStartPermlink || '',
+                    hasMorePosts: document.getElementById('posts-tab-content').dataset.hasMorePosts === 'true',
+                    postListDiv: document.getElementById('posts-tab-content').querySelector('.post-list'),
+                    loadMoreButton: document.getElementById('posts-tab-content').querySelector('.load-more-button'),
+                    noMoreMessage: document.getElementById('posts-tab-content').querySelector('.no-more-posts-message')
+                },
+                reblogs: {
+                    nextStartAuthor: document.getElementById('reblogs-tab-content').dataset.nextStartAuthor || '',
+                    nextStartPermlink: document.getElementById('reblogs-tab-content').dataset.nextStartPermlink || '',
+                    hasMorePosts: document.getElementById('reblogs-tab-content').dataset.hasMorePosts === 'true',
+                    postListDiv: document.getElementById('reblogs-tab-content').querySelector('.post-list'),
+                    loadMoreButton: document.getElementById('reblogs-tab-content').querySelector('.load-more-button'),
+                    noMoreMessage: document.getElementById('reblogs-tab-content').querySelector('.no-more-posts-message')
+                }
+            };
+
+            // Asegurar el estado inicial del botón "Cargar más" y el mensaje "No hay más posts"
+            const updateLoadMoreVisibility = (tabKey) => {
+                const state = paginationState[tabKey];
+                if (state.loadMoreButton) {
+                    state.loadMoreButton.style.display = state.hasMorePosts ? 'block' : 'none';
+                }
+                if (state.noMoreMessage) {
+                    state.noMoreMessage.style.display = state.hasMorePosts ? 'none' : 'block';
+                }
+            };
+
+            // Inicializar visibilidad para la pestaña "posts"
+            updateLoadMoreVisibility('posts');
+            // La pestaña "reblogs" inicialmente oculta su mensaje de "No hay más"
+            paginationState.reblogs.noMoreMessage.style.display = 'none';
+
+            // Función para renderizar los posts
+            const renderPosts = (posts, targetPostListDiv) => {
                 posts.forEach(post => {
                     const postCard = document.createElement('div');
-                    postCard.className = 'post-card'; 
+                    postCard.className = 'post-card';
                     postCard.innerHTML = `
                         <h3><a href="/post-detail/?author=${post.author}&permlink=${post.permlink}">${post.title}</a></h3>
                         <p>Por ${post.author} el ${new Date(post.created).toLocaleDateString()}</p>
                         <p>${post.body.substring(0, 150)}...</p>
                     `;
-                    postListDiv.appendChild(postCard);
+                    targetPostListDiv.appendChild(postCard);
                 });
             };
 
-            const loadMoreHandler = async () => {
-                if (!hasMorePosts) {
-                    console.log('No hay más posts para cargar.');
+            const loadPostsForTab = async (tabKey) => {
+                const state = paginationState[tabKey];
+                const contentType = document.getElementById(`${tabKey}-tab-content`).dataset.contentType;
+                const username = document.getElementById(`${tabKey}-tab-content`).dataset.username;
+                const postsPerPage = parseInt(document.getElementById(`${tabKey}-tab-content`).dataset.postsPerPage);
+
+                if (!state.hasMorePosts) {
+                    console.log(`No hay más ${tabKey} para cargar.`);
                     return;
                 }
 
-                loadMoreButton.textContent = 'Cargando...';
-                loadMoreButton.disabled = true;
+                state.loadMoreButton.textContent = 'Cargando...';
+                state.loadMoreButton.disabled = true;
 
                 try {
-                    const username = postsContentDiv.dataset.username;
-                    const postsPerPage = parseInt(postsContentDiv.dataset.postsPerPage);
-
                     const url = new URL(`${FUNCTIONS_BASE_URL}/get-user-posts`);
                     url.searchParams.append('username', username);
-                    url.searchParams.append('limit', postsPerPage); 
-                    
-                    if (nextStartAuthor && nextStartPermlink) {
-                        url.searchParams.append('start_author', nextStartAuthor);
-                        url.searchParams.append('start_permlink', nextStartPermlink);
+                    url.searchParams.append('limit', postsPerPage);
+                    url.searchParams.append('contentType', contentType); // Especificamos el tipo de contenido
+
+                    if (state.nextStartAuthor && state.nextStartPermlink) {
+                        url.searchParams.append('start_author', state.nextStartAuthor);
+                        url.searchParams.append('start_permlink', state.nextStartPermlink);
                     }
 
                     const response = await fetch(url.toString());
-                    const responseData = await response.json(); 
+                    const responseData = await response.json();
 
                     if (responseData.error) {
                         console.error('Error al cargar posts:', responseData.error);
                         alert(`Error al cargar posts: ${responseData.error.message || responseData.error}`);
-                        hasMorePosts = false;
+                        state.hasMorePosts = false;
                     } else {
-                        const newPosts = responseData.posts || []; 
-                        console.log(`Cargados ${newPosts.length} nuevos posts.`);
+                        const newPosts = responseData.posts || [];
+                        console.log(`Cargados ${newPosts.length} nuevos ${tabKey}.`);
 
-                        renderPosts(newPosts);
+                        // Si es la primera carga de la pestaña (ej. reblogs), limpiamos el mensaje inicial.
+                        if (state.postListDiv.children.length === 1 && state.postListDiv.children[0].tagName === 'P') {
+                            state.postListDiv.innerHTML = '';
+                        }
+                        renderPosts(newPosts, state.postListDiv);
 
-                        nextStartAuthor = responseData.nextStartAuthor || '';
-                        nextStartPermlink = responseData.nextStartPermlink || '';
-                        hasMorePosts = responseData.hasMore;
+                        state.nextStartAuthor = responseData.nextStartAuthor || '';
+                        state.nextStartPermlink = responseData.nextStartPermlink || '';
+                        state.hasMorePosts = responseData.hasMore;
                     }
                 } catch (error) {
                     console.error('Error de red al cargar posts:', error);
                     alert('Error de red al cargar posts. Inténtelo de nuevo.');
-                    hasMorePosts = false;
+                    state.hasMorePosts = false;
                 } finally {
-                    loadMoreButton.textContent = 'Cargar más posts';
-                    loadMoreButton.disabled = false;
-                    
-                    if (!hasMorePosts) {
-                        loadMoreButton.style.display = 'none';
-                        noMoreMessage.style.display = 'block';
-                    }
+                    state.loadMoreButton.textContent = `Cargar más ${tabKey}`;
+                    state.loadMoreButton.disabled = false;
+                    updateLoadMoreVisibility(tabKey);
                 }
             };
 
-            if (loadMoreButton) {
-                loadMoreButton.addEventListener('click', loadMoreHandler);
-            }
+            tabButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    const targetTab = button.dataset.tab;
+
+                    // Remover clase 'active' de todos los botones y contenidos
+                    tabButtons.forEach(btn => btn.classList.remove('active'));
+                    tabContents.forEach(content => content.classList.remove('active'));
+
+                    // Añadir clase 'active' al botón y contenido correctos
+                    button.classList.add('active');
+                    document.getElementById(`${targetTab}-tab-content`).classList.add('active');
+
+                    // Si es la pestaña de reblogs y aún no ha cargado contenido, inicia la carga.
+                    if (targetTab === 'reblogs' && paginationState.reblogs.postListDiv.children.length === 1 && paginationState.reblogs.postListDiv.children[0].tagName === 'P') {
+                        loadPostsForTab('reblogs');
+                    }
+                });
+            });
+
+            // Asignar los event listeners de "Cargar más" a cada botón.
+            paginationState.posts.loadMoreButton.addEventListener('click', () => loadPostsForTab('posts'));
+            paginationState.reblogs.loadMoreButton.addEventListener('click', () => loadPostsForTab('reblogs'));
         });
     </script>
 </body>

@@ -2,7 +2,7 @@
 const Redis = require('ioredis');
 const fetch = require('node-fetch');
 
-let redisClient = null; 
+let redisClient = null;
 
 function isOldPost(createdDate) {
     const sevenDaysAgo = new Date();
@@ -14,7 +14,7 @@ exports.handler = async (event, context) => {
     const timeoutPromise = new Promise((resolve, reject) => {
         setTimeout(() => {
             reject(new Error('Function execution timed out before completing.'));
-        }, 9000); 
+        }, 9000);
     });
 
     try {
@@ -33,7 +33,7 @@ exports.handler = async (event, context) => {
             }
 
             redisClient = new Redis(redisUrl, { password: redisPassword, tls: {} });
-            
+
             if (!redisClient.__listenersAttached) {
                 redisClient.on('error', (err) => console.error('[ioredis] Connection or operation error:', err.message, err.code, err.address));
                 redisClient.on('connect', () => console.log('[ioredis] Connected to Redis!'));
@@ -43,7 +43,7 @@ exports.handler = async (event, context) => {
             }
         }
 
-        const { username, limit, start_author, start_permlink } = event.queryStringParameters;
+        const { username, limit, start_author, start_permlink, contentType = 'posts' } = event.queryStringParameters;
         const parsedLimit = parseInt(limit);
 
         if (!username || !parsedLimit) {
@@ -55,16 +55,17 @@ exports.handler = async (event, context) => {
             'https://api.deathwing.me',
             'https://api.pharesim.me'
         ];
-        
-        const cacheKey = `hive:author_posts:${username}:${parsedLimit}:${start_author || 'null'}:${start_permlink || 'null'}`;
-        
+
+        // La clave del caché ahora vuelve a incluir contentType para cachear posts y reblogs por separado.
+        const cacheKey = `hive:${contentType}:${username}:${parsedLimit}:${start_author || 'null'}:${start_permlink || 'null'}`;
+
         let cachedResponse = null;
         try {
             cachedResponse = await Promise.race([redisClient.get(cacheKey), timeoutPromise]);
         } catch (redisErr) {
             console.error(`Error trying to get from Redis for ${cacheKey}:`, redisErr);
         }
-       
+
         if (cachedResponse) {
             console.log(`Cache HIT for key: ${cacheKey}`);
             return {
@@ -75,15 +76,16 @@ exports.handler = async (event, context) => {
         }
         console.log(`Cache MISS for key: ${cacheKey}. Fetching from Hive.`);
 
-        const requestLimitToHive = 20; 
+        // Siempre pedimos 20, el máximo.
+        const requestLimitToHive = 20;
 
         const body = {
             jsonrpc: '2.0',
             id: 1,
             method: 'condenser_api.get_discussions_by_blog',
             params: [{
-                tag: username, 
-                limit: requestLimitToHive, 
+                tag: username,
+                limit: requestLimitToHive,
                 start_author: start_author || undefined,
                 start_permlink: start_permlink || undefined,
             }],
@@ -131,56 +133,71 @@ exports.handler = async (event, context) => {
 
         const allFetchedItems = hiveData.result || [];
 
-        // --- FILTRADO MUY ESTRICTO: Solo posts donde el autor es el 'username' solicitado y NO es un reblog ---
-        const strictlyOriginalPostsByAuthor = [];
-        let skippedInitialDuplicate = false;
+        // --- FILTRADO POR TIPO (posts originales O reblogs) ---
+        const filteredItems = [];
+        let skippedInitialDuplicate = false; // Bandera para saltar el primer elemento si es un duplicado de start_permlink.
 
         for (const item of allFetchedItems) {
-            if (!skippedInitialDuplicate && start_author && start_permlink && 
+            // Si hay un start_author/permlink y este item es el duplicado inicial, lo saltamos.
+            if (!skippedInitialDuplicate && start_author && start_permlink &&
                 item.author === start_author && item.permlink === start_permlink) {
                 skippedInitialDuplicate = true;
-                continue; 
+                continue; // Saltar este item duplicado
             }
 
-            // AÑADIR LA CONDICIÓN: El autor del post debe coincidir con el 'username' solicitado
-            if (item.author === username && (!item.reblogged_by || item.reblogged_by.length === 0)) {
-                strictlyOriginalPostsByAuthor.push(item);
+            if (contentType === 'posts') {
+                // Filtro para posts originales: autor debe ser el mismo y no debe ser reblog.
+                if (item.author === username && (!item.reblogged_by || item.reblogged_by.length === 0)) {
+                    filteredItems.push(item);
+                }
+            } else if (contentType === 'reblogs') {
+                // Filtro para reblogs: debe tener reblogged_by. El autor del reblogged_by debe ser el usuario.
+                // IMPORTANTE: El reblogged_by es un array. Verificamos que contenga al username.
+                if (item.reblogged_by && item.reblogged_by.includes(username)) {
+                     filteredItems.push(item);
+                }
             }
+            // Si contentType no coincide, o no es 'posts' ni 'reblogs', el item no se añade.
         }
 
-        const currentBatchItems = strictlyOriginalPostsByAuthor.slice(0, parsedLimit);
+        // Tomamos solo la cantidad necesaria para el lote actual.
+        const currentBatchItems = filteredItems.slice(0, parsedLimit);
 
+        // --- DETERMINACIÓN DE LA PRÓXIMA PÁGINA (nextStartAuthor/Permlink) ---
+        // La paginación SIEMPRE se basa en el ÚLTIMO elemento de la respuesta ORIGINAL de Hive.
+        // Esto es CRUCIAL para que Hive siga avanzando en el feed del usuario y no se "atasque".
         let nextStartAuthor = null;
         let nextStartPermlink = null;
         let hasMore = true;
 
-        if (currentBatchItems.length < parsedLimit) {
+        if (allFetchedItems.length < requestLimitToHive || allFetchedItems.length === 0) {
+            // Si Hive nos dio menos de 20 posts, o ningún post, no hay más en el feed general.
             hasMore = false;
         } else {
-            // El nextStart es el último elemento del lote filtrado, asegurando continuidad de posts del autor.
-            const lastItem = currentBatchItems[currentBatchItems.length - 1];
-            nextStartAuthor = lastItem.author;
-            nextStartPermlink = lastItem.permlink;
-            hasMore = true;
+            // El nextStart siempre apunta al último post de la respuesta CRUDA de Hive.
+            const lastItemFromHive = allFetchedItems[allFetchedItems.length - 1];
+            nextStartAuthor = lastItemFromHive.author;
+            nextStartPermlink = lastItemFromHive.permlink;
+            hasMore = true; // Por defecto true si recibimos un lote completo de Hive.
         }
-        
+
         const responseData = {
-            posts: currentBatchItems,
-            nextStartAuthor: nextStartAuthor,
+            posts: currentBatchItems, // Devolvemos solo los posts filtrados y limitados.
+            nextStartAuthor: nextStartAuthor, // La paginación siempre es del feed completo de Hive.
             nextStartPermlink: nextStartPermlink,
             hasMore: hasMore
         };
-        
-        if (currentBatchItems.length > 0) { 
+
+        if (currentBatchItems.length > 0) {
             const cacheDuration = currentBatchItems.every(item => isOldPost(item.created)) ? 60 * 60 * 24 * 30 : 60 * 5;
             try {
-                await Promise.race([redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', cacheDuration), timeoutPromise]); 
-                console.log(`Cache SET for key: ${cacheKey} (Posts originales de autor, duración: ${cacheDuration / 60} min).`);
+                await Promise.race([redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', cacheDuration), timeoutPromise]);
+                console.log(`Cache SET for key: ${cacheKey} (${contentType} filtered, duration: ${cacheDuration / 60} min).`);
             } catch (redisErr) {
                 console.error(`Error trying to save to Redis ${cacheKey}:`, redisErr);
             }
         }
-        
+
         return {
             statusCode: 200,
             headers: { 'Content-Type': 'application/json' },
