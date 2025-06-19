@@ -3,43 +3,52 @@
 import PostCard from '../components/PostCard.astro';
 import '../styles/global.css';
 
-// Constantes y lógica de carga inicial de posts (server-side)
 const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
 const USERNAME_TO_FETCH = 'quigua';
-const POSTS_PER_PAGE = 10;
+const POSTS_PER_PAGE = 10; // Este es el límite de posts por "página" que mostraremos.
 
+// --- Carga inicial de posts (Originales) ---
 let initialPosts = [];
-let nextStartAuthor = '';
-let nextStartPermlink = '';
-let hasMorePosts = true; // Asumimos que hay más posts al inicio
+let initialPostsNextStartAuthor = '';
+let initialPostsNextStartPermlink = '';
+let initialPostsHasMore = true;
 
 try {
-    const response = await fetch(`${FUNCTIONS_BASE_URL}/get-user-posts?username=${USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}`);
-    const data = await response.json();
-
-    if (data.error) {
-        console.error("Error al cargar posts iniciales (server-side):", data.error, data.details);
-    } else if (data.posts && Array.isArray(data.posts)) {
-        initialPosts = data.posts;
-        console.log("Posts iniciales cargados (server-side):", initialPosts.length);
-
-        // Lógica de paginación: si se cargaron menos de POSTS_PER_PAGE, no hay más.
-        if (initialPosts.length < POSTS_PER_PAGE) {
-            hasMorePosts = false;
-        } else {
-            // Si cargamos POSTS_PER_PAGE posts, el último es el punto de inicio para la siguiente página
-            const lastPost = initialPosts[initialPosts.length - 1];
-            nextStartAuthor = lastPost.author;
-            nextStartPermlink = lastPost.permlink;
-        }
+    const response = await fetch(`${FUNCTIONS_BASE_URL}/get-user-posts?username=${USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}&contentType=posts`);
+    
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`ASTRO SERVER: Error HTTP al cargar posts (originales): ${response.status} - ${errorText}`);
     } else {
-        console.warn("La respuesta de la función no contiene un array 'posts' válido:", data);
-        hasMorePosts = false; // Si no hay posts o formato inválido, no hay más
+        const data = await response.json();
+        if (data.error) {
+            console.error("ASTRO SERVER: Error al cargar posts iniciales (originales) desde la función:", data.error, data.details);
+        } else if (data.posts && Array.isArray(data.posts)) {
+            initialPosts = data.posts;
+            console.log("ASTRO SERVER: Posts originales iniciales cargados:", initialPosts.length);
+            if (initialPosts.length < POSTS_PER_PAGE) {
+                initialPostsHasMore = false;
+            } else {
+                const lastPost = initialPosts[initialPosts.length - 1];
+                initialPostsNextStartAuthor = lastPost.author;
+                initialPostsNextStartPermlink = lastPost.permlink;
+            }
+        }
     }
 } catch (error) {
-    console.error("Error al conectar con la función Netlify para posts iniciales (server-side):", error);
-    hasMorePosts = false; // En caso de error, asumimos que no hay más posts cargables
+    console.error("ASTRO SERVER: Error CRÍTICO al conectar con la función Netlify para posts originales:", error);
+    initialPostsHasMore = false;
 }
+
+// --- Carga inicial de reblogs (Se inicializa vacío, se carga por JS si se selecciona la pestaña) ---
+// Para los reblogs, no los cargaremos inicialmente en el servidor para evitar doble carga.
+// Los manejaremos completamente del lado del cliente cuando se seleccione la pestaña de reblogs.
+// Dejamos variables para consistencia, pero serán actualizadas por JS.
+let initialReblogs = []; 
+let initialReblogsNextStartAuthor = '';
+let initialReblogsNextStartPermlink = '';
+let initialReblogsHasMore = true; // Se asume que hay más hasta que se pruebe lo contrario
+
 ---
 <!DOCTYPE html>
 <html lang="es">
@@ -47,33 +56,80 @@ try {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mi Blog de Hive - Astro</title>
+    <style>
+        /* Estilos básicos para las pestañas */
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #ccc;
+        }
+        .tab-button {
+            padding: 10px 15px;
+            cursor: pointer;
+            border: none;
+            background-color: transparent;
+            font-size: 1em;
+            color: #555;
+            transition: all 0.3s ease;
+        }
+        .tab-button.active {
+            border-bottom: 2px solid #007bff;
+            color: #007bff;
+            font-weight: bold;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+    </style>
 </head>
 <body>
     <button id="theme-toggle">Activar Modo Oscuro</button>
     <h1>Posts de Hive de @{USERNAME_TO_FETCH}</h1>
 
-    <div id="posts-list"
+    <div class="tabs">
+        <button class="tab-button active" data-tab="posts">Posts Originales</button>
+        <button class="tab-button" data-tab="reblogs">Reblogs</button>
+    </div>
+
+    <div id="posts-tab-content" class="tab-content active"
+        data-content-type="posts"
         data-username={USERNAME_TO_FETCH}
         data-posts-per-page={POSTS_PER_PAGE}
-        data-next-start-author={nextStartAuthor}
-        data-next-start-permlink={nextStartPermlink}
-        data-has-more-posts={hasMorePosts}
+        data-next-start-author={initialPostsNextStartAuthor}
+        data-next-start-permlink={initialPostsNextStartPermlink}
+        data-has-more-posts={initialPostsHasMore}
     >
-        <h2>Últimos Posts</h2>
         <div class="post-list">
             {initialPosts.length === 0 ? (
-                <p>No se encontraron posts o hubo un error al cargar.</p>
+                <p>No se encontraron posts originales o hubo un error al cargar.</p>
             ) : (
                 initialPosts.map(post => (
                     <PostCard post={post} />
                 ))
             )}
         </div>
-        
-        {hasMorePosts && (
-            <button id="load-more-button">Cargar más posts</button>
+        {initialPostsHasMore && (
+            <button class="load-more-button">Cargar más posts</button>
         )}
-        <p id="no-more-posts-message" style="display: {hasMorePosts ? 'none' : 'block'};">No hay más posts para cargar.</p>
+        <p class="no-more-posts-message" style="display: {initialPostsHasMore ? 'none' : 'block'};">No hay más posts para cargar.</p>
+    </div>
+
+    <div id="reblogs-tab-content" class="tab-content"
+        data-content-type="reblogs"
+        data-username={USERNAME_TO_FETCH}
+        data-posts-per-page={POSTS_PER_PAGE}
+        data-next-start-author="" // Se inicializará cuando se carguen
+        data-next-start-permlink="" // Se inicializará cuando se carguen
+        data-has-more-posts="true" // Se asume true hasta la primera carga
+    >
+        <div class="post-list">
+            <p>Cargando reblogs...</p>
+        </div>
+        <button class="load-more-button">Cargar más reblogs</button>
+        <p class="no-more-posts-message" style="display: none;">No hay más reblogs para cargar.</p>
     </div>
 
     <script src="../scripts/theme.js"></script>
