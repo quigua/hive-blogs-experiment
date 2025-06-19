@@ -5,38 +5,78 @@ import '../styles/global.css';
 
 const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
 const USERNAME_TO_FETCH = 'quigua';
-const POSTS_PER_PAGE = 10; // Este es el límite de posts por "página" que mostraremos.
+const POSTS_PER_PAGE = 10;
 
-// --- Carga inicial de posts (Originales) ---
+// --- Carga inicial de posts (Originales) directamente desde Hive para mayor fiabilidad en el build ---
 let initialPosts = [];
 let initialPostsNextStartAuthor = '';
 let initialPostsNextStartPermlink = '';
 let initialPostsHasMore = true;
 
+const hiveNodes = [
+    'https://api.hive.blog',
+    'https://api.deathwing.me',
+    'https://api.pharesim.me'
+];
+
 try {
-    const response = await fetch(`${FUNCTIONS_BASE_URL}/get-user-posts?username=${USERNAME_TO_FETCH}&limit=${POSTS_PER_PAGE}&contentType=posts`);
-    
-    if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`ASTRO SERVER: Error HTTP al cargar posts (originales): ${response.status} - ${errorText}`);
-    } else {
-        const data = await response.json();
-        if (data.error) {
-            console.error("ASTRO SERVER: Error al cargar posts iniciales (originales) desde la función:", data.error, data.details);
-        } else if (data.posts && Array.isArray(data.posts)) {
-            initialPosts = data.posts;
-            console.log("ASTRO SERVER: Posts originales iniciales cargados:", initialPosts.length);
-            if (initialPosts.length < POSTS_PER_PAGE) {
-                initialPostsHasMore = false;
+    let hiveData = null;
+    let hiveResponse = null;
+    let fetchError = null;
+
+    // Intentar con los nodos de Hive para la carga inicial
+    for (const nodeUrl of hiveNodes) {
+        try {
+            const response = await fetch(nodeUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: 1,
+                    method: 'condenser_api.get_discussions_by_blog',
+                    params: [{ tag: USERNAME_TO_FETCH, limit: POSTS_PER_PAGE + 5 }] // Pedir más para filtrar
+                }),
+            });
+            if (response.ok) {
+                hiveResponse = response;
+                hiveData = await response.json();
+                if (!hiveData.error) {
+                    fetchError = null; // Éxito en la obtención de datos
+                    break;
+                } else {
+                    fetchError = new Error(`ASTRO SERVER: Error de la API de Hive en ${nodeUrl}: ${JSON.stringify(hiveData.error)}`);
+                    console.error(fetchError.message);
+                }
             } else {
-                const lastPost = initialPosts[initialPosts.length - 1];
-                initialPostsNextStartAuthor = lastPost.author;
-                initialPostsNextStartPermlink = lastPost.permlink;
+                fetchError = new Error(`ASTRO SERVER: Error HTTP de la API de Hive en ${nodeUrl}: ${response.status} - ${await response.text()}`);
+                console.error(fetchError.message);
             }
+        } catch (error) {
+            fetchError = new Error(`ASTRO SERVER: Error de red al conectar con ${nodeUrl}: ${error.message}`);
+            console.error(fetchError.message);
         }
     }
+
+    if (hiveData && !hiveData.error && hiveData.result) {
+        const fetchedPosts = hiveData.result || [];
+        const filteredInitialPosts = fetchedPosts.filter(post => !post.reblogged_by || post.reblogged_by.length === 0);
+        
+        initialPosts = filteredInitialPosts.slice(0, POSTS_PER_PAGE); // Tomar solo los primeros 10 posts originales
+
+        console.log("ASTRO SERVER: Posts originales iniciales cargados:", initialPosts.length);
+        if (initialPosts.length < POSTS_PER_PAGE) {
+            initialPostsHasMore = false;
+        } else {
+            const lastPost = initialPosts[initialPosts.length - 1];
+            initialPostsNextStartAuthor = lastPost.author;
+            initialPostsNextStartPermlink = lastPost.permlink;
+        }
+    } else {
+        console.error("ASTRO SERVER: No se pudieron cargar los posts originales iniciales desde Hive.", fetchError);
+        initialPostsHasMore = false;
+    }
 } catch (error) {
-    console.error("ASTRO SERVER: Error CRÍTICO al conectar con la función Netlify para posts originales:", error);
+    console.error("ASTRO SERVER: Error general al procesar posts iniciales:", error);
     initialPostsHasMore = false;
 }
 
@@ -116,18 +156,17 @@ let initialReblogsHasMore = true; // Se asume que hay más hasta que se pruebe l
         )}
         <p class="no-more-posts-message" style="display: {initialPostsHasMore ? 'none' : 'block'};">No hay más posts para cargar.</p>
     </div>
-
-    <div id="reblogs-tab-content" class="tab-content"
+    
+       <div id="reblogs-tab-content" class="tab-content"
         data-content-type="reblogs"
         data-username={USERNAME_TO_FETCH}
         data-posts-per-page={POSTS_PER_PAGE}
-        data-next-start-author="" // Se inicializará cuando se carguen
-        data-next-start-permlink="" // Se inicializará cuando se carguen
-        data-has-more-posts="true" // Se asume true hasta la primera carga
+        data-next-start-author=""
+        data-next-start-permlink=""
+        data-has-more-posts="true"
     >
         <div class="post-list">
-            <p>Cargando reblogs...</p>
-        </div>
+            <p>Haz clic en "Cargar más reblogs" para ver el contenido.</p> </div>
         <button class="load-more-button">Cargar más reblogs</button>
         <p class="no-more-posts-message" style="display: none;">No hay más reblogs para cargar.</p>
     </div>

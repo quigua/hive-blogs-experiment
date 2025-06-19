@@ -5,7 +5,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const tabButtons = document.querySelectorAll('.tab-button');
     const tabContents = document.querySelectorAll('.tab-content');
 
-    // Estado global de la paginación para cada tipo de contenido
     const paginationState = {
         posts: {
             nextStartAuthor: '',
@@ -26,23 +25,22 @@ document.addEventListener('DOMContentLoaded', () => {
     paginationState.posts.nextStartAuthor = initialPostsTab.dataset.nextStartAuthor || '';
     paginationState.posts.nextStartPermlink = initialPostsTab.dataset.nextStartPermlink || '';
     paginationState.posts.hasMorePosts = initialPostsTab.dataset.hasMorePosts === 'true';
-    if (initialPostsTab.dataset.hasMorePosts === 'false') {
+    if (!paginationState.posts.hasMorePosts) {
         initialPostsTab.querySelector('.load-more-button').style.display = 'none';
         initialPostsTab.querySelector('.no-more-posts-message').style.display = 'block';
     }
 
 
-    // Función para renderizar posts
     const renderPosts = (posts, containerElement) => {
         const postListDiv = containerElement.querySelector('.post-list');
-        postListDiv.innerHTML = ''; // Limpia el contenido actual
+        postListDiv.innerHTML = ''; // Limpia el contenido actual, esto es clave para solo mostrar 10 a la vez
         if (posts.length === 0) {
-            postListDiv.innerHTML = '<p>No se encontraron más posts.</p>';
+            postListDiv.innerHTML = '<p>No se encontraron más elementos.</p>'; // Mensaje más genérico
             return;
         }
         posts.forEach(post => {
             const postCard = document.createElement('div');
-            postCard.className = 'post-card'; // Asume una clase para tu PostCard
+            postCard.className = 'post-card'; 
             postCard.innerHTML = `
                 <h3><a href="/post-detail/?author=${post.author}&permlink=${post.permlink}">${post.title}</a></h3>
                 <p>Por ${post.author} el ${new Date(post.created).toLocaleDateString()}</p>
@@ -53,7 +51,6 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
 
-    // Manejador de eventos para cargar más posts/reblogs
     const loadMoreHandler = async (event) => {
         const currentTabContent = event.target.closest('.tab-content');
         const contentType = currentTabContent.dataset.contentType;
@@ -73,7 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const url = new URL(`${FUNCTIONS_BASE_URL}/get-user-posts`);
             url.searchParams.append('username', username);
-            url.searchParams.append('limit', postsPerPage); // Pide solo 10 a la vez
+            url.searchParams.append('limit', postsPerPage); 
             url.searchParams.append('contentType', contentType);
 
             if (currentState.nextStartAuthor && currentState.nextStartPermlink) {
@@ -89,17 +86,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 alert(`Error al cargar ${contentType}: ${data.error}`);
                 currentState.hasMorePosts = false;
             } else {
-                const newPosts = data.posts || [];
-                console.log(`Cargados ${newPosts.length} nuevos ${contentType}.`);
+                const newItems = data.posts || [];
+                console.log(`Cargados ${newItems.length} nuevos ${contentType}.`);
 
-                renderPosts(newPosts, currentTabContent); // Renderiza SOLO los nuevos posts
+                renderPosts(newItems, currentTabContent);
 
-                if (newPosts.length < postsPerPage) {
+                if (newItems.length < postsPerPage) {
                     currentState.hasMorePosts = false;
                 } else {
-                    const lastPost = newPosts[newPosts.length - 1];
-                    currentState.nextStartAuthor = lastPost.author;
-                    currentState.nextStartPermlink = lastPost.permlink;
+                    const lastItem = newItems[newItems.length - 1];
+                    currentState.nextStartAuthor = lastItem.author;
+                    currentState.nextStartPermlink = lastItem.permlink;
                 }
                 currentState.currentPage++;
             }
@@ -111,7 +108,6 @@ document.addEventListener('DOMContentLoaded', () => {
             event.target.textContent = `Cargar más ${contentType === 'posts' ? 'posts' : 'reblogs'}`;
             event.target.disabled = false;
             
-            // Actualiza el estado del botón y mensaje
             if (!currentState.hasMorePosts) {
                 event.target.style.display = 'none';
                 currentTabContent.querySelector('.no-more-posts-message').style.display = 'block';
@@ -119,12 +115,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    // Adjuntar manejadores de eventos a todos los botones "Cargar más"
     document.querySelectorAll('.load-more-button').forEach(button => {
         button.addEventListener('click', loadMoreHandler);
     });
 
-    // Manejador de eventos para las pestañas
     const activateTab = async (tabName) => {
         tabButtons.forEach(button => {
             if (button.dataset.tab === tabName) {
@@ -146,11 +140,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const currentState = paginationState[tabName];
         
         // Si es la primera vez que se carga esta pestaña (y no es la de posts iniciales)
+        // Y si tiene contenido inicial vacío o un mensaje de "cargar"
         if (tabName === 'reblogs' && currentState.currentPage === 0) {
             const postListDiv = currentTabContent.querySelector('.post-list');
-            postListDiv.innerHTML = '<p>Cargando reblogs...</p>'; // Muestra un mensaje de carga
-            // Simular un clic en el botón de carga para iniciar la carga de reblogs
-            await loadMoreHandler({ target: currentTabContent.querySelector('.load-more-button') });
+            // Sólo si no se ha cargado nada aún o tiene el mensaje por defecto
+            if (postListDiv.innerHTML.includes('Haz clic en "Cargar más reblogs"')) {
+                postListDiv.innerHTML = '<p>Cargando reblogs...</p>'; // Muestra un mensaje de carga
+                await loadMoreHandler({ target: currentTabContent.querySelector('.load-more-button') });
+            }
         }
     };
 
