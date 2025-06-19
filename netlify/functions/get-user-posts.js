@@ -1,157 +1,133 @@
 // netlify/functions/get-user-posts.js
-const hive = require('@hiveio/hive-js');
+const Redis = require('ioredis'); // Importa el cliente Redis
+const fetch = require('node-fetch'); // Asumiendo que ya usas node-fetch para la API de Hive
+
+// Configura la conexión a Redis usando las variables de entorno de Netlify
+// Asegúrate de que estas variables estén configuradas en Netlify
+const redis = new Redis({
+    port: 6380, // Puerto estándar para Redis sobre SSL/TLS
+    host: process.env.UPSTASH_REDIS_URL.split('rediss://')[1], // Extrae el host de la URL
+    password: process.env.UPSTASH_REDIS_PASSWORD,
+    tls: {
+        rejectUnauthorized: false // Puede ser necesario para algunos entornos serverless
+    }
+});
+
+// Función auxiliar para calcular si un post es "viejo" (inmutable)
+function isOldPost(createdDate) {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    return new Date(createdDate) < sevenDaysAgo;
+}
 
 exports.handler = async (event, context) => {
-    // Asegurarse de que el websocket está configurado
-    // *** IMPORTANTE: REEMPLAZA 'TU_DOMINIO_PERSONALIZADO.COM' CON TU DOMINIO REAL ***
-    const BASE_BLOG_URL = 'https://dreamy-baklava-d17cb6.netlify.app';
-    hive.config.set('websocket', 'https://api.hive.blog');
-    console.log("Configuración de Hive.js: websocket a https://api.hive.blog");
-
-    const username = event.queryStringParameters.username || 'quigua';
-    const limit = parseInt(event.queryStringParameters.limit) || 20;
-    let startAuthor = event.queryStringParameters.start_author || null;
-    let startPermlink = event.queryStringParameters.start_permlink || null;
-
-    const allUserPosts = [];
-    const reblogs = [];
-    let hasMore = true;
-    const fetchBatchSize = 20; // Reducido temporalmente para depuración, para ver si afecta la respuesta inicial
-
-    console.log(`Iniciando búsqueda para usuario: ${username}, límite: ${limit}`);
-    console.log(`Paginación inicial: startAuthor=\{startAuthor\}, startPermlink\={startPermlink}`);
-
     try {
-        while (hasMore && allUserPosts.length < limit) {
-            const query = {
-                tag: username,
-                limit: fetchBatchSize,
+        const { username, limit, start_author, start_permlink } = event.queryStringParameters;
+
+        if (!username || !limit) {
+            return {
+                statusCode: 400,
+                body: JSON.stringify({ error: 'Faltan parámetros: username o limit.' }),
             };
-
-            if (startAuthor && startPermlink) {
-                query.start_author = startAuthor;
-                query.start_permlink = startPermlink;
-            }
-
-            console.log("Consulta enviada a Hive API:", JSON.stringify(query));
-
-            const postsBatch = await hive.api.getDiscussionsByBlogAsync(query);
-            console.log(`Posts recibidos en el batch (postsBatch.length): ${postsBatch.length}`);
-
-            // Si la primera publicación del batch es la misma que la última de la iteración anterior (duplicado por paginación),
-            // la quitamos. Esto pasa si start_author/permlink son el último item del batch anterior.
-            if (postsBatch.length > 0 && startAuthor && startPermlink && 
-                postsBatch[0].author === startAuthor && postsBatch[0].permlink === startPermlink) {
-                postsBatch.shift(); 
-                console.log("Se eliminó un post duplicado del batch.");
-            }
-
-            if (postsBatch.length === 0) {
-                console.log("El batch de posts está vacío después de eliminar duplicados. Terminando.");
-                hasMore = false; // No hay más publicaciones en absoluto o ya hemos procesado todas
-                break;
-            }
-
-            // --- Depuración CRUCIAL: Imprimir la estructura del primer post recibido si hay alguno ---
-            if (postsBatch.length > 0) {
-                console.log("--- Estructura del PRIMER POST recibido en este batch ---");
-                // Usamos JSON.stringify para asegurar que se muestre todo el objeto
-                console.log(JSON.stringify(postsBatch[0], null, 2)); 
-                console.log("-------------------------------------------------------");
-            } else {
-                console.log("No hay posts en el batch después de la eliminación de duplicados para depurar.");
-            }
-            // ----------------------------------------------------------------------------------
-
-            let processedInBatch = 0;
-            for (const post of postsBatch) {
-                // Validar la existencia de propiedades clave
-                if (!post.author || !post.permlink || !post.title || !post.body || !post.created) {
-                    console.warn(`Post incompleto o malformado, saltando: ${JSON.stringify(post)}`);
-                    continue; 
-                }
-
-                // Construcción segura de la URL usando post.author y post.permlink
-                const fullUrl = `${BASE_BLOG_URL}/@${post.author}/${post.permlink}`;
-                console.log(`URL construida para el post ${post.permlink}: ${fullUrl}`);
-                
-                
-
-                const postObj = {
-                    id: post.id,
-                    author: post.author,
-                    permlink: post.permlink,
-                    title: post.title,
-                    summary: post.body.substring(0, 200) + (post.body.length > 200 ? '...' : ''),
-                    created: post.created,
-                    url: fullUrl,
-                    body: post.body 
-                };
-
-                if (post.author === username) {
-                    // Es una publicación original del usuario
-                    allUserPosts.push(postObj);
-                    console.log(`Añadido post original: ${post.permlink}. Total originales: ${allUserPosts.length}`);
-                } else {
-                    // Es un reblog
-                    reblogs.push({
-                        ...postObj,
-                        reblogged_by: username 
-                    });
-                    console.log(`Añadido reblog: ${post.permlink}. Total reblogs: ${reblogs.length}`);
-                }
-                processedInBatch++;
-
-                if (allUserPosts.length >= limit) {
-                    console.log(`Alcanzado límite de ${limit} posts originales. Saliendo del bucle interno.`);
-                    break; 
-                }
-            }
-            console.log(`Posts procesados en este batch: ${processedInBatch}`);
-
-
-            // Actualizar los parámetros de paginación para la siguiente iteración
-            // Esto debe ser el último post del batch, no el último original
-            if (postsBatch.length > 0) {
-                const lastPostInBatch = postsBatch[postsBatch.length - 1];
-                startAuthor = lastPostInBatch.author;
-                startPermlink = lastPostInBatch.permlink;
-                console.log(`Actualizando paginación: startAuthor=\{startAuthor\}, startPermlink\={startPermlink}`);
-            } else {
-                hasMore = false; // No hay más publicaciones si el batch está vacío
-                console.log("Batch vacío, estableciendo hasMore a false.");
-            }
-
-            // Si el número de posts en el batch es menor que el tamaño del batch solicitado,
-            // significa que no hay más publicaciones, a menos que el batch sea exacto y queden más.
-            // Ajustamos esta lógica para ser más robusta. Si el `allUserPosts.length` alcanza el `limit`
-            // o si el `postsBatch` fue menor que `fetchBatchSize` (y no es la primera llamada),
-            // o si el `postsBatch` está vacío.
-            if (allUserPosts.length >= limit || postsBatch.length < fetchBatchSize) {
-                hasMore = false;
-                console.log("Condición de fin de paginación alcanzada. hasMore = false.");
-            }
         }
 
-        console.log("Bucle de paginación terminado.");
-        console.log(`Resultado final: Posts originales encontrados: ${allUserPosts.length}, Reblogs encontrados: ${reblogs.length}`);
+        const hiveNodes = [
+            'https://api.hive.blog',
+            'https://api.deathwing.me',
+            'https://api.pharesim.me'
+        ];
+        const randomNode = hiveNodes[Math.floor(Math.random() * hiveNodes.length)];
 
+        // Construir la clave de caché. Una clave simple podría ser el usuario y el offset/limit.
+        // Para posts individuales, la clave podría ser `hive:post:${author}:${permlink}`
+        // Para listas de posts, una clave basada en los parámetros de la consulta es buena.
+        const cacheKey = `hive:posts:${username}:${limit}:${start_author || 'null'}:${start_permlink || 'null'}`;
+        
+        // 1. Intentar obtener de la caché
+        const cachedResponse = await redis.get(cacheKey);
+        if (cachedResponse) {
+            console.log(`Cache HIT para clave: ${cacheKey}`);
+            // Verificar si el caché contiene solo posts viejos.
+            // Si la respuesta cacheada es solo de posts > 7 días, es un hit válido.
+            // Para simplicidad, si la clave existe, asumimos que es válida para este ejemplo.
+            // En una implementación más avanzada, podrías guardar un timestamp en la caché.
+            const parsedData = JSON.parse(cachedResponse);
+            
+            // Si todos los posts en este lote cacheado son viejos, podemos usarlo directamente.
+            // Si hubiera mezcla de posts nuevos y viejos, la lógica se complica,
+            // pero para un `limit` dado y `start_author/permlink`, un solo cache key es suficiente.
+            return {
+                statusCode: 200,
+                headers: { 'Content-Type': 'application/json' },
+                body: cachedResponse,
+            };
+        }
+        console.log(`Cache MISS para clave: ${cacheKey}. Fetching from Hive.`);
+
+        // 2. Si no está en caché, ir a la API de Hive
+        const body = {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'condenser_api.get_discussions_by_blog',
+            params: [{
+                tag: username,
+                limit: parseInt(limit),
+                start_author: start_author || undefined,
+                start_permlink: start_permlink || undefined,
+            }],
+        };
+
+        const hiveResponse = await fetch(randomNode, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+        if (!hiveResponse.ok) {
+            const errorText = await hiveResponse.text();
+            throw new Error(`Error de la API de Hive: ${hiveResponse.status} - ${errorText}`);
+        }
+
+        const hiveData = await hiveResponse.json();
+
+        if (hiveData.error) {
+            console.error('Error de Hive:', hiveData.error);
+            return {
+                statusCode: 500,
+                body: JSON.stringify({ error: 'Error de la API de Hive', details: hiveData.error }),
+            };
+        }
+
+        const posts = hiveData.result || [];
+
+        // Lógica de caché:
+        // Cachear solo si todos los posts en esta respuesta son "viejos" (más de 7 días).
+        // Si hay algún post "nuevo", no cacheamos este lote para asegurar frescura.
+        const allPostsAreOld = posts.every(post => isOldPost(post.created));
+
+        if (allPostsAreOld && posts.length > 0) {
+            // Guardar en caché con una expiración muy larga (ej. 30 días, o -1 para nunca expirar)
+            // Ya que son inmutables, podríamos no ponerle TTL (o un TTL muy largo)
+            await redis.set(cacheKey, JSON.stringify({ posts }), 'EX', 60 * 60 * 24 * 30); // 30 días de caché
+            console.log(`Cache SET para clave: ${cacheKey} (posts viejos).`);
+        } else if (posts.length > 0) {
+            // Si hay posts nuevos en el lote, cachear por un período muy corto (ej. 5 minutos)
+            // para reducir hits rápidos, pero permitir que se actualice.
+            await redis.set(cacheKey, JSON.stringify({ posts }), 'EX', 60 * 5); // 5 minutos de caché
+            console.log(`Cache SET para clave: ${cacheKey} (posts recientes).`);
+        }
+        
         return {
             statusCode: 200,
-            body: JSON.stringify({
-                username: username,
-                posts: allUserPosts, 
-                reblogs: reblogs,   
-                hasMore: hasMore,
-                next_start_author: allUserPosts.length > 0 ? allUserPosts[allUserPosts.length - 1].author : null,
-                next_start_permlink: allUserPosts.length > 0 ? allUserPosts[allUserPosts.length - 1].permlink : null,
-            }),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ posts }),
         };
+
     } catch (error) {
-        console.error("Error al obtener publicaciones de Hive:", error);
+        console.error('Error en la función get-user-posts:', error);
         return {
             statusCode: 500,
-            body: JSON.stringify({ error: "Error al comunicarse con la blockchain de Hive para obtener publicaciones.", details: error.message }),
+            body: JSON.stringify({ error: 'Error interno del servidor', details: error.message }),
         };
     }
 };
