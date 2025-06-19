@@ -5,9 +5,9 @@ import '../styles/global.css';
 
 const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
 const USERNAME_TO_FETCH = 'quigua';
-const POSTS_PER_PAGE = 10;
+const POSTS_PER_PAGE = 10; // Sigue siendo la cantidad de posts por página.
 
-// --- Carga inicial de posts (Originales) directamente desde Hive para mayor fiabilidad en el build ---
+// --- Carga inicial de posts (Originales) directamente desde Hive ---
 let initialPosts = [];
 let initialPostsNextStartAuthor = '';
 let initialPostsNextStartPermlink = '';
@@ -23,7 +23,7 @@ try {
     let hiveData = null;
     let fetchError = null;
 
-    // EL CAMBIO CLAVE: Aseguramos que el límite de solicitud a Hive es 20.
+    // EL LÍMITE DE LA API DE HIVE ES 20. Pedimos el máximo para tener buffer.
     const requestLimitToHive = 20; 
 
     for (const nodeUrl of hiveNodes) {
@@ -53,29 +53,33 @@ try {
             }
         } catch (error) {
             fetchError = new Error(`ASTRO SERVER: Error de red al conectar con ${nodeUrl}: ${error.message}`);
-            console.error(fetchError.message);
+            console.error(error); // Log del error de red
+            fetchError = new Error(`ASTRO SERVER: Error de red al conectar con ${nodeUrl}: ${error.message}`);
         }
     }
 
     if (hiveData && !hiveData.error && hiveData.result) {
         const allFetchedItems = hiveData.result || [];
         
-        // --- FILTRADO DE POSTS ORIGINALES PARA EL LOTE INICIAL ---
-        const typeFilteredItems = allFetchedItems.filter(post => !post.reblogged_by || post.reblogged_by.length === 0);
+        // --- FILTRADO EXCLUSIVO PARA POSTS ORIGINALES ---
+        // Esto filtra solo los posts que NO tienen 'reblogged_by' o su array está vacío.
+        const originalPosts = allFetchedItems.filter(post => !post.reblogged_by || post.reblogged_by.length === 0);
         
-        // Seleccionamos los primeros 10 posts originales
-        initialPosts = typeFilteredItems.slice(0, POSTS_PER_PAGE); 
+        // Seleccionamos los primeros POSTS_PER_PAGE posts originales para el display inicial.
+        initialPosts = originalPosts.slice(0, POSTS_PER_PAGE); 
 
-        // --- DETERMINACIÓN DE LA PRÓXIMA PÁGINA BASADA EN EL FEED COMPLETO DE HIVE ---
-        // La paginación siempre se basa en el feed completo de Hive.
-        if (allFetchedItems.length < requestLimitToHive || allFetchedItems.length === 0) {
+        // --- Determinación de la paginación ---
+        // Ahora, la paginación se basa en los posts *originales* que encontramos.
+        if (originalPosts.length <= POSTS_PER_PAGE || initialPosts.length < POSTS_PER_PAGE) {
+            // Si el número de posts originales es menor o igual al límite, o si no pudimos llenar la primera página,
+            // asumimos que no hay más posts originales para cargar.
             initialPostsHasMore = false;
         } else {
-            // El nextStart es el último elemento de la respuesta completa de Hive.
-            const lastItem = allFetchedItems[allFetchedItems.length - 1];
-            initialPostsNextStartAuthor = lastItem.author;
-            initialPostsNextStartPermlink = lastItem.permlink;
-            initialPostsHasMore = true; // Asumimos que hay más si Hive nos dio un lote completo.
+            // Si hay suficientes posts originales, el nextStart será el último de nuestro lote inicial.
+            const lastItemInInitialPosts = initialPosts[initialPosts.length - 1];
+            initialPostsNextStartAuthor = lastItemInInitialPosts.author;
+            initialPostsNextStartPermlink = lastItemInInitialPosts.permlink;
+            initialPostsHasMore = true;
         }
         
         console.log("ASTRO SERVER: Posts originales iniciales cargados:", initialPosts.length, "HasMore:", initialPostsHasMore, "Next:", initialPostsNextStartPermlink);
@@ -88,46 +92,37 @@ try {
     initialPostsHasMore = false;
 }
 
-// Para los reblogs, no los cargaremos inicialmente en el servidor.
-// Su estado inicial indica que no se han cargado y que hay potencial para más.
-let initialReblogs = []; 
-let initialReblogsNextStartAuthor = '';
-let initialReblogsNextStartPermlink = '';
-let initialReblogsHasMore = true; 
-
 ---
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mi Blog de Hive - Astro</title>
+    <title>Blog de Hive de @{USERNAME_TO_FETCH}</title>
+    <link rel="stylesheet" href="/styles/global.css">
     <style>
-        /* Estilos básicos para las pestañas */
-        .tabs {
-            display: flex;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #ccc;
+        /* Estilos básicos para el botón de cargar más */
+        .load-more-container {
+            text-align: center;
+            margin-top: 30px;
         }
-        .tab-button {
-            padding: 10px 15px;
+        .load-more-button {
+            padding: 10px 20px;
+            font-size: 1.1em;
             cursor: pointer;
+            background-color: #007bff;
+            color: white;
             border: none;
-            background-color: transparent;
-            font-size: 1em;
-            color: #555;
-            transition: all 0.3s ease;
+            border-radius: 5px;
+            transition: background-color 0.3s ease;
         }
-        .tab-button.active {
-            border-bottom: 2px solid #007bff;
-            color: #007bff;
-            font-weight: bold;
+        .load-more-button:hover {
+            background-color: #0056b3;
         }
-        .tab-content {
-            display: none;
-        }
-        .tab-content.active {
-            display: block;
+        .no-more-posts-message {
+            text-align: center;
+            margin-top: 20px;
+            color: #777;
         }
     </style>
 </head>
@@ -135,13 +130,7 @@ let initialReblogsHasMore = true;
     <button id="theme-toggle">Activar Modo Oscuro</button>
     <h1>Posts de Hive de @{USERNAME_TO_FETCH}</h1>
 
-    <div class="tabs">
-        <button class="tab-button active" data-tab="posts">Posts Originales</button>
-        <button class="tab-button" data-tab="reblogs">Reblogs</button>
-    </div>
-
-    <div id="posts-tab-content" class="tab-content active"
-        data-content-type="posts"
+    <div id="posts-content" 
         data-username={USERNAME_TO_FETCH}
         data-posts-per-page={POSTS_PER_PAGE}
         data-next-start-author={initialPostsNextStartAuthor}
@@ -157,28 +146,102 @@ let initialReblogsHasMore = true;
                 ))
             )}
         </div>
-        {initialPostsHasMore && (
-            <button class="load-more-button">Cargar más posts</button>
-        )}
-        <p class="no-more-posts-message" style="display: {initialPostsHasMore ? 'none' : 'block'};">No hay más posts para cargar.</p>
-    </div>
-
-    <div id="reblogs-tab-content" class="tab-content"
-        data-content-type="reblogs"
-        data-username={USERNAME_TO_FETCH}
-        data-posts-per-page={POSTS_PER_PAGE}
-        data-next-start-author="" 
-        data-next-start-permlink="" 
-        data-has-more-posts="true"
-    >
-        <div class="post-list">
-            <p>Haz clic en "Cargar más reblogs" para ver el contenido.</p>
+        <div class="load-more-container">
+            {initialPostsHasMore && (
+                <button class="load-more-button">Cargar más posts</button>
+            )}
+            <p class="no-more-posts-message" style="display: {initialPostsHasMore ? 'none' : 'block'};">No hay más posts para cargar.</p>
         </div>
-        <button class="load-more-button">Cargar más reblogs</button>
-        <p class="no-more-posts-message" style="display: none;">No hay más reblogs para cargar.</p>
     </div>
 
     <script src="../scripts/theme.js"></script>
-    <script src="../scripts/pagination.js"></script>
+    <script>
+        // Script de paginación simplificado para "solo posts originales"
+        document.addEventListener('DOMContentLoaded', () => {
+            const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
+            
+            const postsContentDiv = document.getElementById('posts-content');
+            const postListDiv = postsContentDiv.querySelector('.post-list');
+            const loadMoreButton = postsContentDiv.querySelector('.load-more-button');
+            const noMoreMessage = postsContentDiv.querySelector('.no-more-posts-message');
+
+            let nextStartAuthor = postsContentDiv.dataset.nextStartAuthor || '';
+            let nextStartPermlink = postsContentDiv.dataset.nextStartPermlink || '';
+            let hasMorePosts = postsContentDiv.dataset.hasMorePosts === 'true';
+
+            // Función para renderizar los posts en el contenedor especificado.
+            const renderPosts = (posts) => {
+                posts.forEach(post => {
+                    const postCard = document.createElement('div');
+                    postCard.className = 'post-card'; 
+                    postCard.innerHTML = `
+                        <h3><a href="/post-detail/?author=${post.author}&permlink=${post.permlink}">${post.title}</a></h3>
+                        <p>Por ${post.author} el ${new Date(post.created).toLocaleDateString()}</p>
+                        <p>${post.body.substring(0, 150)}...</p>
+                    `;
+                    postListDiv.appendChild(postCard);
+                });
+            };
+
+            const loadMoreHandler = async () => {
+                if (!hasMorePosts) {
+                    console.log('No hay más posts para cargar.');
+                    return;
+                }
+
+                loadMoreButton.textContent = 'Cargando...';
+                loadMoreButton.disabled = true;
+
+                try {
+                    const username = postsContentDiv.dataset.username;
+                    const postsPerPage = parseInt(postsContentDiv.dataset.postsPerPage);
+
+                    const url = new URL(`${FUNCTIONS_BASE_URL}/get-user-posts`);
+                    url.searchParams.append('username', username);
+                    url.searchParams.append('limit', postsPerPage); 
+                    // No necesitamos contentType aquí si la función siempre filtra posts originales.
+                    
+                    if (nextStartAuthor && nextStartPermlink) {
+                        url.searchParams.append('start_author', nextStartAuthor);
+                        url.searchParams.append('start_permlink', nextStartPermlink);
+                    }
+
+                    const response = await fetch(url.toString());
+                    const responseData = await response.json(); 
+
+                    if (responseData.error) {
+                        console.error('Error al cargar posts:', responseData.error);
+                        alert(`Error al cargar posts: ${responseData.error.message || responseData.error}`);
+                        hasMorePosts = false;
+                    } else {
+                        const newPosts = responseData.posts || []; 
+                        console.log(`Cargados ${newPosts.length} nuevos posts.`);
+
+                        renderPosts(newPosts);
+
+                        nextStartAuthor = responseData.nextStartAuthor || '';
+                        nextStartPermlink = responseData.nextStartPermlink || '';
+                        hasMorePosts = responseData.hasMore;
+                    }
+                } catch (error) {
+                    console.error('Error de red al cargar posts:', error);
+                    alert('Error de red al cargar posts. Inténtelo de nuevo.');
+                    hasMorePosts = false;
+                } finally {
+                    loadMoreButton.textContent = 'Cargar más posts';
+                    loadMoreButton.disabled = false;
+                    
+                    if (!hasMorePosts) {
+                        loadMoreButton.style.display = 'none';
+                        noMoreMessage.style.display = 'block';
+                    }
+                }
+            };
+
+            if (loadMoreButton) {
+                loadMoreButton.addEventListener('click', loadMoreHandler);
+            }
+        });
+    </script>
 </body>
 </html>
