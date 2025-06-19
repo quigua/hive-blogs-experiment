@@ -2,23 +2,47 @@
 const Redis = require('ioredis');
 const fetch = require('node-fetch');
 
-// Configura la conexión a Redis usando la URL completa de las variables de entorno de Netlify
-// ¡Asegúrate de que UPSTASH_REDIS_URL sea la URL completa (ej. rediss://[host]:[port])!
-const redis = new Redis(process.env.UPSTASH_REDIS_URL, {
-    password: process.env.UPSTASH_REDIS_PASSWORD, // Algunas URLs de Upstash ya incluyen la contraseña
-                                                  // pero especificarla explícitamente es más seguro si tu URL no lo hace.
+// Asegúrate de que UPSTASH_REDIS_URL es una URL completa con el formato rediss://:password@host:port
+// Por ejemplo: rediss://:YOUR_PASSWORD@us1-vast-yak-33760.upstash.io:6379
+
+const redisUrl = process.env.UPSTASH_REDIS_URL;
+const redisPassword = process.env.UPSTASH_REDIS_PASSWORD;
+
+// Verificación de variables de entorno para depuración
+if (!redisUrl) {
+    console.error("ERROR: UPSTASH_REDIS_URL no está configurada.");
+    // No lanzar error aquí para permitir la depuración posterior, pero fallará la conexión.
+}
+if (!redisPassword) {
+    console.error("ERROR: UPSTASH_REDIS_PASSWORD no está configurada.");
+}
+
+// Conexión a Redis usando la URL completa
+// Es crucial que la URL sea del formato correcto para ioredis, incluyendo el esquema 'rediss://'
+// y opcionalmente la contraseña incrustada, aunque la estamos pasando por separado también.
+const redis = new Redis(redisUrl, {
+    password: redisPassword, // Pasar la contraseña explícitamente es una buena práctica
     tls: {
-        rejectUnauthorized: false // Esto a veces es necesario en Netlify por temas de certificados
+        // rejectUnauthorized: false // Puede que no sea necesario con Upstash si sus certificados son válidos
+                                  // Pero lo dejamos si da problemas de certificado
     }
 });
 
-// **Importante:** Añade un manejador de errores para ioredis, así no se bloquea la función en despliegue
-// Esto te ayudará a ver errores de conexión sin que Netlify cierre la función.
+// Manejadores de eventos para depuración de la conexión Redis
 redis.on('error', (err) => {
-    console.error('[ioredis] Error de conexión o operación:', err);
+    console.error('[ioredis] Error de conexión o operación:', err.message, err.code, err.address);
+    // Para evitar que el error de ioredis se "trague" la ejecución, lanzamos un error que la función principal pueda capturar
+    // No queremos que una conexión fallida a Redis detenga toda la función si Hive está disponible.
+    // Pero en el caso de 'ECONNREFUSED' o 'ETIMEDOUT' en la conexión inicial, sí es crítico.
 });
 redis.on('connect', () => {
     console.log('[ioredis] Conectado a Redis!');
+});
+redis.on('reconnecting', () => {
+    console.warn('[ioredis] Reconectando a Redis...');
+});
+redis.on('end', () => {
+    console.warn('[ioredis] Conexión a Redis terminada.');
 });
 
 
@@ -30,6 +54,15 @@ function isOldPost(createdDate) {
 }
 
 exports.handler = async (event, context) => {
+    // Añade un timeout para la función si se excede un tiempo razonable
+    // para evitar el timeout de 10 segundos de Netlify en casos de larga espera por Redis/Hive.
+    // Esto es más para manejar errores que para evitarlos.
+    const timeoutPromise = new Promise((resolve, reject) => {
+        setTimeout(() => {
+            reject(new Error('Function execution timed out before completing.'));
+        }, 9000); // 9 segundos, un poco menos que el timeout de Netlify
+    });
+
     try {
         const { username, limit, start_author, start_permlink } = event.queryStringParameters;
 
@@ -49,13 +82,13 @@ exports.handler = async (event, context) => {
 
         const cacheKey = `hive:posts:${username}:${limit}:${start_author || 'null'}:${start_permlink || 'null'}`;
         
-        // 1. Intentar obtener de la caché
         let cachedResponse = null;
         try {
-            cachedResponse = await redis.get(cacheKey);
+            // Se usa Promise.race para manejar posibles bloqueos en la llamada a Redis
+            cachedResponse = await Promise.race([redis.get(cacheKey), timeoutPromise]);
         } catch (redisErr) {
             console.error(`Error al intentar obtener de Redis para ${cacheKey}:`, redisErr);
-            // Continúa sin caché si hay un error en Redis
+            // Si Redis falla, continuamos sin caché
         }
        
         if (cachedResponse) {
@@ -68,7 +101,6 @@ exports.handler = async (event, context) => {
         }
         console.log(`Cache MISS para clave: ${cacheKey}. Fetching from Hive.`);
 
-        // 2. Si no está en caché, ir a la API de Hive
         const body = {
             jsonrpc: '2.0',
             id: 1,
@@ -81,11 +113,15 @@ exports.handler = async (event, context) => {
             }],
         };
 
-        const hiveResponse = await fetch(randomNode, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
+        // Se usa Promise.race para manejar posibles bloqueos en la llamada a Hive
+        const hiveResponse = await Promise.race([
+            fetch(randomNode, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            }),
+            timeoutPromise // Añadimos el timeout también para la llamada a Hive
+        ]);
 
         if (!hiveResponse.ok) {
             const errorText = await hiveResponse.text();
@@ -104,19 +140,20 @@ exports.handler = async (event, context) => {
 
         const posts = hiveData.result || [];
 
-        // Lógica de caché:
         const allPostsAreOld = posts.every(post => isOldPost(post.created));
 
         if (allPostsAreOld && posts.length > 0) {
             try {
-                await redis.set(cacheKey, JSON.stringify({ posts }), 'EX', 60 * 60 * 24 * 30); // 30 días de caché
+                // Se usa Promise.race para manejar posibles bloqueos al guardar en Redis
+                await Promise.race([redis.set(cacheKey, JSON.stringify({ posts }), 'EX', 60 * 60 * 24 * 30), timeoutPromise]);
                 console.log(`Cache SET para clave: ${cacheKey} (posts viejos).`);
             } catch (redisErr) {
                 console.error(`Error al intentar guardar en Redis (posts viejos) ${cacheKey}:`, redisErr);
             }
         } else if (posts.length > 0) {
             try {
-                await redis.set(cacheKey, JSON.stringify({ posts }), 'EX', 60 * 5); // 5 minutos de caché
+                // Se usa Promise.race para manejar posibles bloqueos al guardar en Redis
+                await Promise.race([redis.set(cacheKey, JSON.stringify({ posts }), 'EX', 60 * 5), timeoutPromise]);
                 console.log(`Cache SET para clave: ${cacheKey} (posts recientes).`);
             } catch (redisErr) {
                 console.error(`Error al intentar guardar en Redis (posts recientes) ${cacheKey}:`, redisErr);
@@ -130,10 +167,17 @@ exports.handler = async (event, context) => {
         };
 
     } catch (error) {
-        console.error('Error en la función get-user-posts:', error);
+        console.error('Error en la función get-user-posts (capturado):', error.message, error.stack);
         return {
             statusCode: 500,
             body: JSON.stringify({ error: 'Error interno del servidor', details: error.message }),
         };
+    } finally {
+        // Esto es crucial en entornos sin servidor: cierra la conexión Redis después de cada invocación
+        // para liberar recursos. Si no haces esto, las conexiones pueden acumularse y causar problemas.
+        if (redis && redis.status === 'ready') {
+            redis.quit();
+            console.log('[ioredis] Conexión Redis cerrada.');
+        }
     }
 };
