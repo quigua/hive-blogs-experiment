@@ -1,298 +1,388 @@
-// netlify/functions/get-user-posts.js
-const Redis = require('ioredis');
-const fetch = require('node-fetch');
+---
+// src/pages/index.astro
+import PostCard from '../components/PostCard.astro';
+import '../styles/global.css';
 
-let redisClient = null;
+const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
+const USERNAME_TO_FETCH = 'quigua';
+const POSTS_PER_PAGE = 10;
 
-function isOldPost(createdDate) {
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    return new Date(createdDate) < sevenDaysAgo;
+// --- Carga inicial de posts (Originales) en el servidor (Astro) ---
+// NOTA: Esta sección no cambia y seguirá cargando posts originales como antes.
+// El nuevo comportamiento de debug solo afectará a la pestaña 'reblogs' a través del JS del cliente.
+let initialPosts = [];
+let initialPostsNextStartAuthor = '';
+let initialPostsNextStartPermlink = '';
+let initialPostsHasMore = true;
+
+const hiveNodes = [
+    'https://api.hive.blog',
+    'https://api.deathwing.me',
+    'https://api.pharesim.me'
+];
+
+try {
+    let hiveData = null;
+    let fetchError = null;
+    const requestLimitToHive = 20;
+
+    for (const nodeUrl of hiveNodes) {
+        try {
+            const response = await fetch(nodeUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: 1,
+                    method: 'condenser_api.get_discussions_by_blog',
+                    params: [{ tag: USERNAME_TO_FETCH, limit: requestLimitToHive }]
+                }),
+            });
+            if (response.ok) {
+                hiveData = await response.json();
+                if (!hiveData.error) {
+                    fetchError = null;
+                    break;
+                } else {
+                    fetchError = new Error(`ASTRO SERVER: Error de la API de Hive en ${nodeUrl}: ${JSON.stringify(hiveData.error)}`);
+                    console.error(fetchError.message);
+                }
+            } else {
+                fetchError = new Error(`ASTRO SERVER: Error HTTP de la API de Hive en ${nodeUrl}: ${response.status} - ${await response.text()}`);
+                console.error(fetchError.message);
+            }
+        } catch (error) {
+            fetchError = new Error(`ASTRO SERVER: Error de red al conectar con ${nodeUrl}: ${error.message}`);
+            console.error(error);
+        }
+    }
+
+    if (hiveData && !hiveData.error && hiveData.result) {
+        const allFetchedItems = hiveData.result || [];
+
+        const originalPosts = allFetchedItems.filter(post =>
+            post.author === USERNAME_TO_FETCH &&
+            (!post.reblogged_by || post.reblogged_by.length === 0)
+        );
+
+        initialPosts = originalPosts.slice(0, POSTS_PER_PAGE);
+
+        if (allFetchedItems.length < requestLimitToHive || allFetchedItems.length === 0) {
+            initialPostsHasMore = false;
+        } else {
+            const lastItemOriginal = allFetchedItems[allFetchedItems.length - 1];
+            initialPostsNextStartAuthor = lastItemOriginal.author;
+            initialPostsNextStartPermlink = lastItemOriginal.permlink;
+            initialPostsHasMore = true;
+        }
+
+        console.log("ASTRO SERVER: Posts originales iniciales cargados:", initialPosts.length, "HasMore:", initialPostsHasMore, "Next:", initialPostsNextStartPermlink);
+
+    } else {
+        console.error("ASTRO SERVER: No se pudieron cargar los posts originales iniciales desde Hive.", fetchError);
+        initialPostsHasMore = false;
+    }
+} catch (error) {
+    console.error("ASTRO SERVER: Error general al procesar posts iniciales:", error);
+    initialPostsHasMore = false;
 }
 
-exports.handler = async (event, context) => {
-    // Aumentamos el timeout para dar más margen a las múltiples llamadas si son necesarias.
-    // 25 segundos es un buen límite para Netlify Functions (máx 26s).
-    const timeoutPromise = new Promise((resolve, reject) => {
-        setTimeout(() => {
-            reject(new Error('Function execution timed out before completing.'));
-        }, 25000); // 25 segundos
-    });
+let initialReblogs = [];
+let initialReblogsNextStartAuthor = '';
+let initialReblogsNextStartPermlink = '';
+let initialReblogsHasMore = true;
 
-    try {
-        if (!redisClient || redisClient.status === 'end' || redisClient.status === 'wait') {
-            console.log('[ioredis] Initializing or re-establishing Redis connection...');
-            const redisUrl = process.env.UPSTASH_REDIS_URL;
-            const redisPassword = process.env.UPSTASH_REDIS_PASSWORD;
-
-            if (!redisUrl) {
-                console.error("ERROR: UPSTASH_REDIS_URL is not configured.");
-                return { statusCode: 500, body: JSON.stringify({ error: 'Missing Redis URL configuration.' }) };
-            }
-            if (!redisPassword) {
-                console.error("ERROR: UPSTASH_REDIS_PASSWORD is not configured.");
-                return { statusCode: 500, body: JSON.stringify({ error: 'Missing Redis Password configuration.' }) };
-            }
-
-            redisClient = new Redis(redisUrl, { password: redisPassword, tls: {} });
-
-            if (!redisClient.__listenersAttached) {
-                redisClient.on('error', (err) => console.error('[ioredis] Connection or operation error:', err.message, err.code, err.address));
-                redisClient.on('connect', () => console.log('[ioredis] Connected to Redis!'));
-                redisClient.on('reconnecting', () => console.warn('[ioredis] Reconnecting to Redis...'));
-                redisClient.on('end', () => { console.warn('[ioredis] Redis connection terminated. Resetting client.'); redisClient = null; });
-                redisClient.__listenersAttached = true;
-            }
+---
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blog de Hive de @{USERNAME_TO_FETCH}</title>
+    <link rel="stylesheet" href="/styles/global.css">
+    <style>
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #ccc;
         }
-
-        const { username, limit, start_author, start_permlink, contentType = 'posts' } = event.queryStringParameters;
-        const parsedLimit = parseInt(limit); // Cuántos posts filtrados queremos devolver
-
-        if (!username || !parsedLimit) {
-            return { statusCode: 400, body: JSON.stringify({ error: 'Missing parameters: username or limit.' }) };
+        .tab-button {
+            padding: 10px 15px;
+            cursor: pointer;
+            border: none;
+            background-color: transparent;
+            font-size: 1em;
+            color: #555;
+            transition: all 0.3s ease;
         }
-
-        const hiveNodes = [
-            'https://api.hive.blog',
-            'https://api.deathwing.me',
-            'https://api.pharesim.me'
-        ];
-
-        // La clave del caché ahora incluye contentType para cachear posts y reblogs por separado.
-        const cacheKey = `hive:${contentType}:${username}:${parsedLimit}:${start_author || 'null'}:${start_permlink || 'null'}`;
-
-        let cachedResponse = null;
-        try {
-            cachedResponse = await Promise.race([redisClient.get(cacheKey), timeoutPromise]);
-        } catch (redisErr) {
-            console.error(`Error trying to get from Redis for ${cacheKey}:`, redisErr);
+        .tab-button.active {
+            border-bottom: 2px solid #007bff;
+            color: #007bff;
+            font-weight: bold;
         }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .load-more-container {
+            text-align: center;
+            margin-top: 30px;
+        }
+        .load-more-button {
+            padding: 10px 20px;
+            font-size: 1.1em;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            transition: background-color 0.3s ease;
+        }
+        .load-more-button:hover {
+            background-color: #0056b3;
+        }
+        .no-more-posts-message {
+            text-align: center;
+            margin-top: 20px;
+            color: #777;
+        }
+        .debug-post-card {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 10px;
+            background-color: #f9f9f9;
+            border-radius: 8px;
+        }
+        .debug-post-card h3 {
+            margin-top: 0;
+            margin-bottom: 5px;
+            color: #333;
+        }
+        .debug-post-card pre {
+            background-color: #eee;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            white-space: pre-wrap; /* Permite que el texto se ajuste */
+            word-wrap: break-word; /* Rompe palabras largas */
+            font-size: 0.85em;
+        }
+    </style>
+</head>
+<body>
+    <button id="theme-toggle">Activar Modo Oscuro</button>
+    <h1>Posts de Hive de @{USERNAME_TO_FETCH}</h1>
 
-        if (cachedResponse) {
-            console.log(`Cache HIT for key: ${cacheKey}`);
-            return {
-                statusCode: 200,
-                headers: { 'Content-Type': 'application/json' },
-                body: cachedResponse,
+    <div class="tabs">
+        <button class="tab-button active" data-tab="posts">Posts Originales</button>
+        <button class="tab-button" data-tab="reblogs">Reblogs (DEBUG)</button>
+    </div>
+
+    <div id="posts-tab-content" class="tab-content active"
+        data-content-type="posts"
+        data-username={USERNAME_TO_FETCH}
+        data-posts-per-page={POSTS_PER_PAGE}
+        data-next-start-author={initialPostsNextStartAuthor}
+        data-next-start-permlink={initialPostsNextStartPermlink}
+        data-has-more-posts={initialPostsHasMore}
+    >
+        <div class="post-list">
+            {initialPosts.length === 0 ? (
+                <p>No se encontraron posts originales o hubo un error al cargar.</p>
+            ) : (
+                initialPosts.map(post => (
+                    <PostCard post={post} />
+                ))
+            )}
+        </div>
+        <div class="load-more-container">
+            {initialPostsHasMore && (
+                <button class="load-more-button">Cargar más posts</button>
+            )}
+            <p class="no-more-posts-message" style="display: {initialPostsHasMore ? 'none' : 'block'};">No hay más posts para cargar.</p>
+        </div>
+    </div>
+
+    <div id="reblogs-tab-content" class="tab-content"
+        data-content-type="reblogs_debug" {/* CAMBIADO para que la función de Netlify sepa que es debug */}
+        data-username={USERNAME_TO_FETCH}
+        data-posts-per-page={POSTS_PER_PAGE}
+        data-next-start-author={initialReblogsNextStartAuthor}
+        data-next-start-permlink={initialReblogsNextStartPermlink}
+        data-has-more-posts={initialReblogsHasMore}
+    >
+        <div class="post-list">
+            <p>Haz clic en "Cargar más reblogs (DEBUG)" para ver los posts brutos de Hive.</p>
+        </div>
+        <div class="load-more-container">
+            <button class="load-more-button">Cargar más reblogs (DEBUG)</button>
+            <p class="no-more-posts-message" style="display: none;">No hay más reblogs para cargar.</p>
+        </div>
+    </div>
+
+    <script src="../scripts/theme.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
+            const USERNAME_TO_FETCH = 'quigua';
+
+            const tabButtons = document.querySelectorAll('.tab-button');
+            const tabContents = document.querySelectorAll('.tab-content');
+
+            const paginationState = {
+                posts: {
+                    nextStartAuthor: document.getElementById('posts-tab-content').dataset.nextStartAuthor || '',
+                    nextStartPermlink: document.getElementById('posts-tab-content').dataset.nextPermlink || '',
+                    hasMorePosts: document.getElementById('posts-tab-content').dataset.hasMorePosts === 'true',
+                    postListDiv: document.getElementById('posts-tab-content').querySelector('.post-list'),
+                    loadMoreButton: document.getElementById('posts-tab-content').querySelector('.load-more-button'),
+                    noMoreMessage: document.getElementById('posts-tab-content').querySelector('.no-more-posts-message')
+                },
+                reblogs: { // Se mantiene 'reblogs' como clave interna, pero el contentType será 'reblogs_debug'
+                    nextStartAuthor: document.getElementById('reblogs-tab-content').dataset.nextStartAuthor || '',
+                    nextStartPermlink: document.getElementById('reblogs-tab-content').dataset.nextPermlink || '',
+                    hasMorePosts: document.getElementById('reblogs-tab-content').dataset.hasMorePosts === 'true',
+                    postListDiv: document.getElementById('reblogs-tab-content').querySelector('.post-list'),
+                    loadMoreButton: document.getElementById('reblogs-tab-content').querySelector('.load-more-button'),
+                    noMoreMessage: document.getElementById('reblogs-tab-content').querySelector('.no-more-posts-message')
+                }
             };
-        }
-        console.log(`Cache MISS for key: ${cacheKey}. Fetching from Hive.`);
 
-        // --- Lógica de BUCLE para obtener suficientes posts FILTRADOS ---
-        const postsToFetchPerCall = 20; // Mantener en 20, ya que es el límite de Hive
-        let collectedFilteredItems = [];
-        let currentHiveStartAuthor = start_author;
-        let currentHiveStartPermlink = start_permlink;
-        let hiveHasMore = true;
-        let maxIterations = 10; // Aumentamos las iteraciones a 10 (20 * 10 = 200 posts brutos máximo)
-                                // para buscar más profundamente si hay pocos items relevantes.
-
-        while (collectedFilteredItems.length < parsedLimit && hiveHasMore && maxIterations > 0) {
-            maxIterations--;
-            console.log(`[LOOP] Iteration ${10 - maxIterations}. Current filtered: ${collectedFilteredItems.length}. Fetching from Hive node...`);
-            
-            const body = {
-                jsonrpc: '2.0',
-                id: 1,
-                method: 'condenser_api.get_discussions_by_blog',
-                params: [{
-                    tag: username,
-                    limit: postsToFetchPerCall,
-                    start_author: currentHiveStartAuthor || undefined,
-                    start_permlink: currentHiveStartPermlink || undefined,
-                }],
+            const updateLoadMoreVisibility = (tabKey) => {
+                const state = paginationState[tabKey];
+                if (state.loadMoreButton) {
+                    state.loadMoreButton.style.display = state.hasMorePosts ? 'block' : 'none';
+                }
+                if (state.noMoreMessage) {
+                    state.noMoreMessage.style.display = state.hasMorePosts ? 'none' : 'block';
+                }
             };
 
-            let hiveResponse;
-            let hiveError = null;
+            updateLoadMoreVisibility('posts');
+            paginationState.reblogs.noMoreMessage.style.display = 'none';
 
-            for (const nodeUrl of hiveNodes) {
-                try {
-                    hiveResponse = await Promise.race([
-                        fetch(nodeUrl, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(body),
-                        }),
-                        timeoutPromise
-                    ]);
-
-                    if (hiveResponse.ok) {
-                        hiveError = null;
-                        break;
+            // FUNCIÓN DE RENDERIZADO MODIFICADA PARA DEBUG
+            const renderPosts = (posts, targetPostListDiv, debugMode = false) => {
+                posts.forEach(post => {
+                    const postCard = document.createElement('div');
+                    postCard.className = debugMode ? 'debug-post-card' : 'post-card';
+                    
+                    if (debugMode) {
+                        // En modo debug, mostramos el JSON completo del post
+                        postCard.innerHTML = `
+                            <h3>Post Title: ${post.title || 'N/A'}</h3>
+                            <p>Author: ${post.author || 'N/A'}</p>
+                            <p>Permlink: ${post.permlink || 'N/A'}</p>
+                            <p>Created: ${new Date(post.created).toLocaleDateString()}</p>
+                            <p>Reblogged By: ${post.reblogged_by ? JSON.stringify(post.reblogged_by) : '[]'}</p>
+                            <pre>${JSON.stringify(post, null, 2)}</pre>
+                        `;
                     } else {
-                        const errorText = await hiveResponse.text();
-                        hiveError = new Error(`Hive API error at ${nodeUrl}: ${hiveResponse.status} - ${errorText}`);
-                        console.error(hiveError.message);
+                        // Modo normal para posts originales (si se usa)
+                        const displayAuthor = post.reblogged_by && post.reblogged_by.length > 0 && post.author !== USERNAME_TO_FETCH
+                            ? `${USERNAME_TO_FETCH} (reblog de ${post.author})`
+                            : post.author;
+
+                        postCard.innerHTML = `
+                            <h3><a href="https://hive.blog/@${post.author}/${post.permlink}" target="_blank" rel="noopener noreferrer">${post.title}</a></h3>
+                            <p>Por ${displayAuthor} el ${new Date(post.created).toLocaleDateString()}</p>
+                            <p>${post.body.substring(0, 150)}...</p>
+                        `;
+                    }
+                    targetPostListDiv.appendChild(postCard);
+                });
+            };
+
+            const loadPostsForTab = async (tabKey) => {
+                const state = paginationState[tabKey];
+                const contentType = document.getElementById(`${tabKey}-tab-content`).dataset.contentType;
+                const username = document.getElementById(`${tabKey}-tab-content`).dataset.username;
+                const postsPerPage = parseInt(document.getElementById(`${tabKey}-tab-content`).dataset.postsPerPage);
+
+                if (!state.hasMorePosts) {
+                    console.log(`No hay más ${tabKey} para cargar.`);
+                    return;
+                }
+
+                state.loadMoreButton.textContent = 'Cargando...';
+                state.loadMoreButton.disabled = true;
+
+                try {
+                    const url = new URL(`${FUNCTIONS_BASE_URL}/get-user-posts`);
+                    url.searchParams.append('username', username);
+                    // Para la versión DEBUG, no necesitamos enviar 'limit' o 'contentType' específico
+                    // ya que la función ignorará 'contentType' y siempre devolverá 20 posts brutos.
+                    // Sin embargo, si quieres que el front sepa cuántos esperaba, se podría mantener.
+                    // Para este modo de debug, es irrelevante lo que pida el 'limit' del front.
+                    url.searchParams.append('limit', postsPerPage); 
+                    // No enviar contentType si estamos en debug para reblogs, la función lo ignora.
+                    if (contentType && contentType !== 'reblogs_debug') {
+                         url.searchParams.append('contentType', contentType);
+                    }
+
+                    if (state.nextStartAuthor && state.nextStartPermlink) {
+                        url.searchParams.append('start_author', state.nextStartAuthor);
+                        url.searchParams.append('start_permlink', state.nextStartPermlink);
+                    }
+
+                    const response = await fetch(url.toString());
+                    const responseData = await response.json();
+
+                    if (responseData.error) {
+                        console.error('Error al cargar posts:', responseData.error);
+                        state.postListDiv.innerHTML = `<p class="text-red-500 text-center">Error al cargar ${tabKey}: ${responseData.error.message || responseData.error}</p>`;
+                        state.hasMorePosts = false;
+                    } else {
+                        const newPosts = responseData.posts || [];
+                        console.log(`Cargados ${newPosts.length} posts brutos para ${tabKey} (DEBUG).`);
+                        console.log('Datos brutos recibidos:', responseData); // MUY IMPORTANTE PARA DEBUG
+
+                        if (state.postListDiv.children.length === 1 && state.postListDiv.children[0].tagName === 'P' && state.postListDiv.children[0].textContent.includes('Haz clic en')) {
+                            state.postListDiv.innerHTML = '';
+                        }
+                        // Renderiza en modo debug para la pestaña 'reblogs'
+                        renderPosts(newPosts, state.postListDiv, tabKey === 'reblogs');
+
+                        state.nextStartAuthor = responseData.nextStartAuthor || '';
+                        state.nextStartPermlink = responseData.nextStartPermlink || '';
+                        state.hasMorePosts = responseData.hasMore;
                     }
                 } catch (error) {
-                    hiveError = new Error(`Network error connecting to ${nodeUrl}: ${error.message}`);
-                    console.error(hiveError.message);
+                    console.error('Error de red al cargar posts:', error);
+                    state.postListDiv.innerHTML = `<p class="text-red-500 text-center">Error de red al cargar ${tabKey}. Inténtelo de nuevo.</p>`;
+                    state.hasMorePosts = false;
+                } finally {
+                    state.loadMoreButton.textContent = `Cargar más ${tabKey}`;
+                    state.loadMoreButton.disabled = false;
+                    updateLoadMoreVisibility(tabKey);
                 }
-            }
+            };
 
-            if (!hiveResponse || !hiveResponse.ok) {
-                console.error("Failed to fetch from any Hive node in loop. Breaking.");
-                hiveHasMore = false; // Detenemos el bucle
-                if (collectedFilteredItems.length === 0) { // Si no hemos recogido nada, lanzamos el error
-                    throw hiveError || new Error('Could not connect to any Hive node during data collection.');
-                }
-                break; // Salir del bucle si ya no podemos obtener más de Hive
-            }
+            tabButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    const targetTab = button.dataset.tab;
 
-            const hiveData = await hiveResponse.json();
+                    tabButtons.forEach(btn => btn.classList.remove('active'));
+                    tabContents.forEach(content => content.classList.remove('active'));
 
-            if (hiveData.error) {
-                console.error('Hive error during loop:', hiveData.error);
-                hiveHasMore = false; // No hay más datos de Hive si hay un error
-                if (collectedFilteredItems.length === 0) {
-                    return { statusCode: 500, body: JSON.stringify({ error: 'Hive API error during data collection', details: hiveData.error }) };
-                }
-                break;
-            }
+                    button.classList.add('active');
+                    document.getElementById(`${targetTab}-tab-content`).classList.add('active');
 
-            const currentFetchedItems = hiveData.result || [];
-            if (currentFetchedItems.length === 0) {
-                hiveHasMore = false; // No hay más posts en el blog de Hive
-                break;
-            }
-
-            // Actualizar la paginación para la siguiente llamada a Hive
-            const lastItemFromHiveBatch = currentFetchedItems[currentFetchedItems.length - 1];
-            currentHiveStartAuthor = lastItemFromHiveBatch.author;
-            currentHiveStartPermlink = lastItemFromHiveBatch.permlink;
-            
-            let itemsToFilter = currentFetchedItems;
-
-            // Si es la primera llamada a la función (start_author/permlink están presentes)
-            // Y el primer ítem devuelto por Hive es el mismo que el start_permlink,
-            // entonces lo saltamos para evitar duplicados en el *primer* lote general.
-            if (start_author && start_permlink && 
-                currentFetchedItems[0] && // Asegurarse de que el primer elemento existe
-                currentFetchedItems[0].author === start_author && 
-                currentFetchedItems[0].permlink === start_permlink) {
-                 // Si collectedFilteredItems aún está vacío, significa que es el primer procesamiento del lote.
-                 // Solo saltamos el duplicado si estamos en la primera iteración general de la función.
-                 if (collectedFilteredItems.length === 0) {
-                     itemsToFilter = currentFetchedItems.slice(1);
-                 }
-            }
-
-
-            // Aplicar el filtro según el contentType
-            for (const item of itemsToFilter) {
-                if (contentType === 'posts') {
-                    if (item.author === username && (!item.reblogged_by || item.reblogged_by.length === 0)) {
-                        collectedFilteredItems.push(item);
+                    // Carga inicial para la pestaña de reblogs solo si es la primera vez que se activa
+                    if (targetTab === 'reblogs' && 
+                        paginationState.reblogs.postListDiv.children.length === 1 && 
+                        paginationState.reblogs.postListDiv.children[0].tagName === 'P' &&
+                        paginationState.reblogs.postListDiv.children[0].textContent.includes('Haz clic en')) {
+                         loadPostsForTab('reblogs');
                     }
-                } else if (contentType === 'reblogs') {
-                    // Filtro para reblogs: debe tener reblogged_by (y ser array), debe contener al username,
-                    // Y el autor de la publicación NO debe ser el username.
-                    if (item.reblogged_by && Array.isArray(item.reblogged_by) && item.reblogged_by.includes(username) && item.author !== username) {
-                         collectedFilteredItems.push(item);
-                    }
-                }
-            }
-            
-            // Si Hive devolvió menos del límite que le pedimos, significa que no hay más en el feed bruto.
-            if (currentFetchedItems.length < postsToFetchPerCall) {
-                hiveHasMore = false;
-            }
-        } // Fin del bucle while
+                });
+            });
 
-        // --- Preparar la respuesta final ---
-        const postsToSend = collectedFilteredItems.slice(0, parsedLimit);
-        
-        let finalHasMore = true; 
-        // Determinamos hasMore:
-        // 1. Si no obtuvimos suficientes posts filtrados para llenar `parsedLimit`
-        // Y Hive ya no tiene más posts en su feed bruto (hiveHasMore es false),
-        // entonces no hay más.
-        if (collectedFilteredItems.length < parsedLimit && !hiveHasMore) {
-            finalHasMore = false;
-        } else if (collectedFilteredItems.length >= parsedLimit) {
-             // Si ya tenemos suficientes posts filtrados para esta carga, y potencialmente más,
-             // asumimos que hay más.
-             finalHasMore = true;
-        } else if (collectedFilteredItems.length === 0 && !hiveHasMore) {
-            // Si no encontramos ningún post filtrado y Hive ya no tiene más posts brutos,
-            // entonces no hay más.
-            finalHasMore = false;
-        } else if (maxIterations === 0 && collectedFilteredItems.length < parsedLimit) {
-            // Si alcanzamos el máximo de iteraciones y no conseguimos suficientes posts,
-            // pero Hive podría tener más (porque no llegó al final de su feed),
-            // la bandera `finalHasMore` debería ser true para que el cliente lo intente de nuevo.
-            finalHasMore = true;
-        }
-
-
-        // La paginación para la siguiente llamada del cliente siempre debe basarse en el
-        // último punto de avance de Hive (currentHiveStartAuthor/permlink),
-        // para que la próxima búsqueda empiece donde la última se detuvo en el feed bruto de Hive.
-        let nextClientStartAuthor = currentHiveStartAuthor;
-        let nextClientStartPermlink = currentHiveStartPermlink;
-
-        // Caso especial: si hemos enviado exactamente `parsedLimit` posts,
-        // pero Hive aún tiene más que darnos (hiveHasMore es true),
-        // mantenemos la paginación de Hive como está.
-        // Si no hemos logrado enviar el parsedLimit, o si el collectedFilteredItems es <= parsedLimit,
-        // Y Hive YA NO TIENE MÁS (hiveHasMore es false), entonces no hay más posts.
-        if (collectedFilteredItems.length === 0 && !hiveHasMore) {
-            finalHasMore = false; // Realmente no hay más.
-            nextClientStartAuthor = null;
-            nextClientStartPermlink = null;
-        } else if (postsToSend.length === 0 && finalHasMore) {
-            // Si no hay posts para enviar en este lote, pero finalHasMore es true,
-            // significa que el cliente debe intentar cargar de nuevo desde el mismo `nextClientStart`
-            // hasta que se encuentren suficientes posts filtrados. Esto es importante.
-            // currentHiveStartAuthor/currentHiveStartPermlink ya tienen el valor correcto.
-        } else if (postsToSend.length < parsedLimit && !hiveHasMore) {
-            // Si enviamos menos de `parsedLimit` y ya no hay más de Hive, entonces no hay más.
-            finalHasMore = false;
-            nextClientStartAuthor = null;
-            nextClientStartPermlink = null;
-        }
-
-        const responseData = {
-            posts: postsToSend,
-            nextStartAuthor: nextClientStartAuthor,
-            nextStartPermlink: nextClientStartPermlink,
-            hasMore: finalHasMore,
-        };
-
-        // Caché de la respuesta
-        if (postsToSend.length > 0) {
-            const cacheDuration = postsToSend.every(item => isOldPost(item.created)) ? 60 * 60 * 24 * 30 : 60 * 5;
-            try {
-                await Promise.race([redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', cacheDuration), timeoutPromise]);
-                console.log(`Cache SET for key: ${cacheKey} (${contentType} filtered, duration: ${cacheDuration / 60} min).`);
-            } catch (redisErr) {
-                console.error(`Error trying to save to Redis ${cacheKey}:`, redisErr);
-            }
-        } else if (!finalHasMore) {
-             // Si no hay posts que enviar y no hay más por cargar, podemos cachear esto también
-             // para evitar llamadas repetidas al final.
-             try {
-                await Promise.race([redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', 60 * 60 * 24 * 7), timeoutPromise]); // 7 días para 'no hay más'
-                console.log(`Cache SET for key: ${cacheKey} (No more items, duration: 7 days).`);
-             } catch (redisErr) {
-                console.error(`Error trying to save 'no more items' to Redis ${cacheKey}:`, redisErr);
-             }
-        }
-
-        return {
-            statusCode: 200,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(responseData),
-        };
-
-    } catch (error) {
-        console.error('Error in get-user-posts function (caught):', error.message, error.stack);
-        return {
-            statusCode: 500,
-            body: JSON.stringify({ error: 'Internal server error', details: error.message }),
-        };
-    } finally {
-        // No llamamos a redisClient.quit() aquí, permitiendo la reutilización de la conexión.
-    }
-};
+            paginationState.posts.loadMoreButton.addEventListener('click', () => loadPostsForTab('posts'));
+            paginationState.reblogs.loadMoreButton.addEventListener('click', () => loadPostsForTab('reblogs'));
+        });
+    </script>
+</body>
+</html>

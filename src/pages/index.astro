@@ -1,353 +1,185 @@
----
-// src/pages/index.astro
-import PostCard from '../components/PostCard.astro';
-import '../styles/global.css';
+// netlify/functions/get-user-posts.js
+const Redis = require('ioredis');
+const fetch = require('node-fetch');
 
-const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
-const USERNAME_TO_FETCH = 'quigua';
-const POSTS_PER_PAGE = 10;
+let redisClient = null;
 
-// --- Carga inicial de posts (Originales) en el servidor (Astro) ---
-let initialPosts = [];
-let initialPostsNextStartAuthor = '';
-let initialPostsNextStartPermlink = '';
-let initialPostsHasMore = true;
-
-const hiveNodes = [
-    'https://api.hive.blog',
-    'https://api.deathwing.me',
-    'https://api.pharesim.me'
-];
-
-try {
-    let hiveData = null;
-    let fetchError = null;
-    const requestLimitToHive = 20; // Siempre pedir 20 para tener buffer de filtrado.
-
-    for (const nodeUrl of hiveNodes) {
-        try {
-            const response = await fetch(nodeUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    jsonrpc: '2.0',
-                    id: 1,
-                    method: 'condenser_api.get_discussions_by_blog',
-                    params: [{ tag: USERNAME_TO_FETCH, limit: requestLimitToHive }]
-                }),
-            });
-            if (response.ok) {
-                hiveData = await response.json();
-                if (!hiveData.error) {
-                    fetchError = null;
-                    break;
-                } else {
-                    fetchError = new Error(`ASTRO SERVER: Error de la API de Hive en ${nodeUrl}: ${JSON.stringify(hiveData.error)}`);
-                    console.error(fetchError.message);
-                }
-            } else {
-                fetchError = new Error(`ASTRO SERVER: Error HTTP de la API de Hive en ${nodeUrl}: ${response.status} - ${await response.text()}`);
-                console.error(fetchError.message);
-            }
-        } catch (error) {
-            fetchError = new Error(`ASTRO SERVER: Error de red al conectar con ${nodeUrl}: ${error.message}`);
-            console.error(error);
-        }
-    }
-
-    if (hiveData && !hiveData.error && hiveData.result) {
-        const allFetchedItems = hiveData.result || [];
-
-        // Filtramos aquí los posts originales del autor para la carga inicial de la pestaña.
-        const originalPosts = allFetchedItems.filter(post =>
-            post.author === USERNAME_TO_FETCH &&
-            (!post.reblogged_by || post.reblogged_by.length === 0)
-        );
-
-        initialPosts = originalPosts.slice(0, POSTS_PER_PAGE);
-
-        // La paginación para la carga inicial se basará en la lista original de Hive, no la filtrada.
-        // Esto asegura que `nextStartPermlink` siempre avance en el tiempo.
-        if (allFetchedItems.length < requestLimitToHive || allFetchedItems.length === 0) {
-            initialPostsHasMore = false;
-        } else {
-            const lastItemOriginal = allFetchedItems[allFetchedItems.length - 1];
-            initialPostsNextStartAuthor = lastItemOriginal.author;
-            initialPostsNextStartPermlink = lastItemOriginal.permlink;
-            initialPostsHasMore = true; // Asumimos que hay más si Hive nos dio un lote completo.
-        }
-
-        console.log("ASTRO SERVER: Posts originales iniciales cargados:", initialPosts.length, "HasMore:", initialPostsHasMore, "Next:", initialPostsNextStartPermlink);
-
-    } else {
-        console.error("ASTRO SERVER: No se pudieron cargar los posts originales iniciales desde Hive.", fetchError);
-        initialPostsHasMore = false;
-    }
-} catch (error) {
-    console.error("ASTRO SERVER: Error general al procesar posts iniciales:", error);
-    initialPostsHasMore = false;
+function isOldPost(createdDate) {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    return new Date(createdDate) < sevenDaysAgo;
 }
 
-// Para los reblogs, no los cargaremos inicialmente en el servidor (Astro).
-// Su estado inicial indica que no se han cargado y que hay potencial para más.
-let initialReblogs = []; // Se mantiene vacío
-let initialReblogsNextStartAuthor = ''; // Se mantiene vacío
-let initialReblogsNextStartPermlink = ''; // Se mantiene vacío
-let initialReblogsHasMore = true; // Se mantiene en true para permitir la carga inicial vía cliente
+exports.handler = async (event, context) => {
+    const timeoutPromise = new Promise((resolve, reject) => {
+        setTimeout(() => {
+            reject(new Error('Function execution timed out before completing.'));
+        }, 25000);
+    });
 
----
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Blog de Hive de @{USERNAME_TO_FETCH}</title>
-    <link rel="stylesheet" href="/styles/global.css">
-    <style>
-        /* Estilos básicos para las pestañas */
-        .tabs {
-            display: flex;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #ccc;
-        }
-        .tab-button {
-            padding: 10px 15px;
-            cursor: pointer;
-            border: none;
-            background-color: transparent;
-            font-size: 1em;
-            color: #555;
-            transition: all 0.3s ease;
-        }
-        .tab-button.active {
-            border-bottom: 2px solid #007bff;
-            color: #007bff;
-            font-weight: bold;
-        }
-        .tab-content {
-            display: none;
-        }
-        .tab-content.active {
-            display: block;
-        }
-        .load-more-container {
-            text-align: center;
-            margin-top: 30px;
-        }
-        .load-more-button {
-            padding: 10px 20px;
-            font-size: 1.1em;
-            cursor: pointer;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            transition: background-color 0.3s ease;
-        }
-        .load-more-button:hover {
-            background-color: #0056b3;
-        }
-        .no-more-posts-message {
-            text-align: center;
-            margin-top: 20px;
-            color: #777;
-        }
-    </style>
-</head>
-<body>
-    <button id="theme-toggle">Activar Modo Oscuro</button>
-    <h1>Posts de Hive de @{USERNAME_TO_FETCH}</h1>
+    try {
+        if (!redisClient || redisClient.status === 'end' || redisClient.status === 'wait') {
+            console.log('[ioredis] Initializing or re-establishing Redis connection...');
+            const redisUrl = process.env.UPSTASH_REDIS_URL;
+            const redisPassword = process.env.UPSTASH_REDIS_PASSWORD;
 
-    <div class="tabs">
-        <button class="tab-button active" data-tab="posts">Posts Originales</button>
-        <button class="tab-button" data-tab="reblogs">Reblogs</button>
-    </div>
+            if (!redisUrl) {
+                console.error("ERROR: UPSTASH_REDIS_URL is not configured.");
+                return { statusCode: 500, body: JSON.stringify({ error: 'Missing Redis URL configuration.' }) };
+            }
+            if (!redisPassword) {
+                console.error("ERROR: UPSTASH_REDIS_PASSWORD is not configured.");
+                return { statusCode: 500, body: JSON.stringify({ error: 'Missing Redis Password configuration.' }) };
+            }
 
-    <div id="posts-tab-content" class="tab-content active"
-        data-content-type="posts"
-        data-username={USERNAME_TO_FETCH}
-        data-posts-per-page={POSTS_PER_PAGE}
-        data-next-start-author={initialPostsNextStartAuthor}
-        data-next-start-permlink={initialPostsNextStartPermlink}
-        data-has-more-posts={initialPostsHasMore}
-    >
-        <div class="post-list">
-            {initialPosts.length === 0 ? (
-                <p>No se encontraron posts originales o hubo un error al cargar.</p>
-            ) : (
-                initialPosts.map(post => (
-                    <PostCard post={post} />
-                ))
-            )}
-        </div>
-        <div class="load-more-container">
-            {initialPostsHasMore && (
-                <button class="load-more-button">Cargar más posts</button>
-            )}
-            <p class="no-more-posts-message" style="display: {initialPostsHasMore ? 'none' : 'block'};">No hay más posts para cargar.</p>
-        </div>
-    </div>
+            redisClient = new Redis(redisUrl, { password: redisPassword, tls: {} });
 
-    <div id="reblogs-tab-content" class="tab-content"
-        data-content-type="reblogs"
-        data-username={USERNAME_TO_FETCH}
-        data-posts-per-page={POSTS_PER_PAGE}
-        data-next-start-author={initialReblogsNextStartAuthor}
-        data-next-start-permlink={initialReblogsNextStartPermlink}
-        data-has-more-posts={initialReblogsHasMore}
-    >
-        <div class="post-list">
-            <p>Haz clic en "Cargar más reblogs" para ver el contenido.</p>
-        </div>
-        <div class="load-more-container">
-            <button class="load-more-button">Cargar más reblogs</button>
-            <p class="no-more-posts-message" style="display: none;">No hay más reblogs para cargar.</p>
-        </div>
-    </div>
+            if (!redisClient.__listenersAttached) {
+                redisClient.on('error', (err) => console.error('[ioredis] Connection or operation error:', err.message, err.code, err.address));
+                redisClient.on('connect', () => console.log('[ioredis] Connected to Redis!'));
+                redisClient.on('reconnecting', () => console.warn('[ioredis] Reconnecting to Redis...'));
+                redisClient.on('end', () => { console.warn('[ioredis] Redis connection terminated. Resetting client.'); redisClient = null; });
+                redisClient.__listenersAttached = true;
+            }
+        }
 
-    <script src="../scripts/theme.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
-            const USERNAME_TO_FETCH = 'quigua';
+        const { username, limit, start_author, start_permlink } = event.queryStringParameters;
+        const parsedLimit = parseInt(limit) || 10; // Usar 10 por defecto para evitar errores
 
-            const tabButtons = document.querySelectorAll('.tab-button');
-            const tabContents = document.querySelectorAll('.tab-content');
+        if (!username) {
+            return { statusCode: 400, body: JSON.stringify({ error: 'Missing parameter: username.' }) };
+        }
 
-            const paginationState = {
-                posts: {
-                    nextStartAuthor: document.getElementById('posts-tab-content').dataset.nextStartAuthor || '',
-                    nextStartPermlink: document.getElementById('posts-tab-content').dataset.nextStartPermlink || '',
-                    hasMorePosts: document.getElementById('posts-tab-content').dataset.hasMorePosts === 'true',
-                    postListDiv: document.getElementById('posts-tab-content').querySelector('.post-list'),
-                    loadMoreButton: document.getElementById('posts-tab-content').querySelector('.load-more-button'),
-                    noMoreMessage: document.getElementById('posts-tab-content').querySelector('.no-more-posts-message')
-                },
-                reblogs: {
-                    nextStartAuthor: document.getElementById('reblogs-tab-content').dataset.nextStartAuthor || '',
-                    nextStartPermlink: document.getElementById('reblogs-tab-content').dataset.nextStartPermlink || '',
-                    hasMorePosts: document.getElementById('reblogs-tab-content').dataset.hasMorePosts === 'true',
-                    postListDiv: document.getElementById('reblogs-tab-content').querySelector('.post-list'),
-                    loadMoreButton: document.getElementById('reblogs-tab-content').querySelector('.load-more-button'),
-                    noMoreMessage: document.getElementById('reblogs-tab-content').querySelector('.no-more-posts-message')
-                }
+        const hiveNodes = [
+            'https://api.hive.blog',
+            'https://api.deathwing.me',
+            'https://api.pharesim.me'
+        ];
+
+        // La clave de caché incluirá "_DEBUG" para que no interfiera con cachés anteriores.
+        const cacheKey = `hive:debug:${username}:${parsedLimit}:${start_author || 'null'}:${start_permlink || 'null'}`;
+
+        let cachedResponse = null;
+        try {
+            cachedResponse = await Promise.race([redisClient.get(cacheKey), timeoutPromise]);
+        } catch (redisErr) {
+            console.error(`Error trying to get from Redis for ${cacheKey}:`, redisErr);
+        }
+
+        if (cachedResponse) {
+            console.log(`DEBUG CACHE: Cache HIT for key: ${cacheKey}`);
+            return {
+                statusCode: 200,
+                headers: { 'Content-Type': 'application/json' },
+                body: cachedResponse,
             };
+        }
+        console.log(`DEBUG CACHE: Cache MISS for key: ${cacheKey}. Fetching RAW data from Hive.`);
 
-            const updateLoadMoreVisibility = (tabKey) => {
-                const state = paginationState[tabKey];
-                if (state.loadMoreButton) {
-                    state.loadMoreButton.style.display = state.hasMorePosts ? 'block' : 'none';
+        const postsToFetch = 20; // Siempre pedir 20 posts brutos para inspección
+
+        const body = {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'condenser_api.get_discussions_by_blog',
+            params: [{
+                tag: username,
+                limit: postsToFetch,
+                start_author: start_author || undefined,
+                start_permlink: start_permlink || undefined,
+            }],
+        };
+
+        let hiveResponse;
+        let hiveError = null;
+
+        for (const nodeUrl of hiveNodes) {
+            console.log(`DEBUG FETCH: Attempting fetch with Hive node: ${nodeUrl}`);
+            try {
+                hiveResponse = await Promise.race([
+                    fetch(nodeUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    }),
+                    timeoutPromise
+                ]);
+
+                if (hiveResponse.ok) {
+                    hiveError = null;
+                    break;
+                } else {
+                    const errorText = await hiveResponse.text();
+                    hiveError = new Error(`Hive API error at ${nodeUrl}: ${hiveResponse.status} - ${errorText}`);
+                    console.error(hiveError.message);
                 }
-                if (state.noMoreMessage) {
-                    state.noMoreMessage.style.display = state.hasMorePosts ? 'none' : 'block';
-                }
-            };
+            } catch (error) {
+                hiveError = new Error(`Network error connecting to ${nodeUrl}: ${error.message}`);
+                console.error(error.message);
+            }
+        }
 
-            updateLoadMoreVisibility('posts');
-            paginationState.reblogs.noMoreMessage.style.display = 'none';
+        if (!hiveResponse || !hiveResponse.ok) {
+            console.error("DEBUG FETCH: Failed to fetch from any Hive node.");
+            throw hiveError || new Error('Could not connect to any Hive node.');
+        }
 
-            // Función para renderizar los posts
-            const renderPosts = (posts, targetPostListDiv) => {
-                posts.forEach(post => {
-                    const postCard = document.createElement('div');
-                    postCard.className = 'post-card';
-                    // Determinar el autor que se muestra: si es un reblog, mostrar reblogged_by
-                    const displayAuthor = post.reblogged_by && post.reblogged_by.length > 0 && post.author !== USERNAME_TO_FETCH
-                        ? `${USERNAME_TO_FETCH} (reblog de ${post.author})`
-                        : post.author;
+        const hiveData = await hiveResponse.json();
 
-                    postCard.innerHTML = `
-                        <h3><a href="https://hive.blog/@${post.author}/${post.permlink}" target="_blank" rel="noopener noreferrer">${post.title}</a></h3>
-                        <p>Por ${displayAuthor} el ${new Date(post.created).toLocaleDateString()}</p>
-                        <p>${post.body.substring(0, 150)}...</p>
-                    `;
-                    targetPostListDiv.appendChild(postCard);
-                });
-            };
+        if (hiveData.error) {
+            console.error('DEBUG HIVE ERROR:', hiveData.error);
+            return { statusCode: 500, body: JSON.stringify({ error: 'Hive API error', details: hiveData.error }) };
+        }
 
-            const loadPostsForTab = async (tabKey) => {
-                const state = paginationState[tabKey];
-                const contentType = document.getElementById(`${tabKey}-tab-content`).dataset.contentType;
-                const username = document.getElementById(`${tabKey}-tab-content`).dataset.username;
-                const postsPerPage = parseInt(document.getElementById(`${tabKey}-tab-content`).dataset.postsPerPage);
+        const rawPostsFromHive = hiveData.result || [];
+        console.log(`DEBUG RAW DATA: Fetched ${rawPostsFromHive.length} raw posts from Hive for @${username}.`);
+        console.log('DEBUG RAW DATA SAMPLE (First 5):', JSON.stringify(rawPostsFromHive.slice(0, 5), null, 2));
 
-                if (!state.hasMorePosts) {
-                    console.log(`No hay más ${tabKey} para cargar.`);
-                    return;
-                }
+        // Determinar la paginación para el siguiente paso
+        let nextClientStartAuthor = null;
+        let nextClientStartPermlink = null;
+        let hasMore = false;
 
-                state.loadMoreButton.textContent = 'Cargando...';
-                state.loadMoreButton.disabled = true;
+        if (rawPostsFromHive.length === postsToFetch) { // Si obtuvimos un lote completo, podría haber más.
+            const lastItem = rawPostsFromHive[rawPostsFromHive.length - 1];
+            nextClientStartAuthor = lastItem.author;
+            nextClientStartPermlink = lastItem.permlink;
+            hasMore = true;
+        }
 
-                try {
-                    const url = new URL(`${FUNCTIONS_BASE_URL}/get-user-posts`);
-                    url.searchParams.append('username', username);
-                    url.searchParams.append('limit', postsPerPage);
-                    url.searchParams.append('contentType', contentType); // 'posts' o 'reblogs'
+        const responseData = {
+            // Devolvemos los posts crudos aquí para inspección.
+            posts: rawPostsFromHive, 
+            nextStartAuthor: nextClientStartAuthor,
+            nextStartPermlink: nextClientStartPermlink,
+            hasMore: hasMore,
+            // Agregamos una bandera para indicar que estamos en modo debug
+            debugMode: true, 
+            originalLimitRequested: parsedLimit,
+            actualPostsReturned: rawPostsFromHive.length
+        };
 
-                    if (state.nextStartAuthor && state.nextStartPermlink) {
-                        url.searchParams.append('start_author', state.nextStartAuthor);
-                        url.searchParams.append('start_permlink', state.nextStartPermlink);
-                    }
+        // Cachear la respuesta DEBUG (por menos tiempo, quizás 5 minutos para que la depuración sea rápida)
+        try {
+            await Promise.race([redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', 60 * 5), timeoutPromise]); // 5 minutos de caché
+            console.log(`DEBUG CACHE: Cache SET for key: ${cacheKey} (DEBUG mode, duration: 5 min).`);
+        } catch (redisErr) {
+            console.error(`DEBUG CACHE: Error trying to save to Redis ${cacheKey}:`, redisErr);
+        }
 
-                    const response = await fetch(url.toString());
-                    const responseData = await response.json();
+        return {
+            statusCode: 200,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(responseData),
+        };
 
-                    if (responseData.error) {
-                        console.error('Error al cargar posts:', responseData.error);
-                        // Mostrar error al usuario
-                        state.postListDiv.innerHTML = `<p class="text-red-500 text-center">Error al cargar ${tabKey}: ${responseData.error.message || responseData.error}</p>`;
-                        state.hasMorePosts = false;
-                    } else {
-                        const newPosts = responseData.posts || [];
-                        console.log(`Cargados ${newPosts.length} nuevos ${tabKey}.`);
-
-                        // Si es la primera carga de la pestaña (ej. reblogs), limpiamos el mensaje inicial.
-                        if (state.postListDiv.children.length === 1 && state.postListDiv.children[0].tagName === 'P' && state.postListDiv.children[0].textContent.includes('Haz clic en')) {
-                            state.postListDiv.innerHTML = '';
-                        }
-                        renderPosts(newPosts, state.postListDiv);
-
-                        state.nextStartAuthor = responseData.nextStartAuthor || '';
-                        state.nextStartPermlink = responseData.nextStartPermlink || '';
-                        state.hasMorePosts = responseData.hasMore;
-                    }
-                } catch (error) {
-                    console.error('Error de red al cargar posts:', error);
-                    // Mostrar error de red al usuario
-                    state.postListDiv.innerHTML = `<p class="text-red-500 text-center">Error de red al cargar ${tabKey}. Inténtelo de nuevo.</p>`;
-                    state.hasMorePosts = false;
-                } finally {
-                    state.loadMoreButton.textContent = `Cargar más ${tabKey}`;
-                    state.loadMoreButton.disabled = false;
-                    updateLoadMoreVisibility(tabKey);
-                }
-            };
-
-            tabButtons.forEach(button => {
-                button.addEventListener('click', () => {
-                    const targetTab = button.dataset.tab;
-
-                    tabButtons.forEach(btn => btn.classList.remove('active'));
-                    tabContents.forEach(content => content.classList.remove('active'));
-
-                    button.classList.add('active');
-                    document.getElementById(`${targetTab}-tab-content`).classList.add('active');
-
-                    // Carga inicial para la pestaña de reblogs solo si es la primera vez que se activa
-                    // y el div aún contiene el mensaje placeholder.
-                    if (targetTab === 'reblogs' && 
-                        paginationState.reblogs.postListDiv.children.length === 1 && 
-                        paginationState.reblogs.postListDiv.children[0].tagName === 'P' &&
-                        paginationState.reblogs.postListDiv.children[0].textContent.includes('Haz clic en')) {
-                         loadPostsForTab('reblogs');
-                    }
-                });
-            });
-
-            paginationState.posts.loadMoreButton.addEventListener('click', () => loadPostsForTab('posts'));
-            paginationState.reblogs.loadMoreButton.addEventListener('click', () => loadPostsForTab('reblogs'));
-        });
-    </script>
-</body>
-</html>
+    } catch (error) {
+        console.error('DEBUG FUNCTION ERROR (caught):', error.message, error.stack);
+        return {
+            statusCode: 500,
+            body: JSON.stringify({ error: 'Internal server error in debug mode', details: error.message }),
+        };
+    } finally {
+        // No llamamos a redisClient.quit() aquí.
+    }
+};
