@@ -91,7 +91,6 @@ let initialReblogs = [];
 let initialReblogsNextStartAuthor = '';
 let initialReblogsNextStartPermlink = '';
 let initialReblogsHasMore = true;
-
 ---
 <!DOCTYPE html>
 <html lang="es">
