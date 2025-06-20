@@ -14,10 +14,11 @@ exports.handler = async (event, context) => {
     const timeoutPromise = new Promise((resolve, reject) => {
         setTimeout(() => {
             reject(new Error('Function execution timed out before completing.'));
-        }, 9000);
+        }, 9000); // Límite de tiempo para operaciones asíncronas
     });
 
     try {
+        // Inicialización o re-establecimiento de la conexión a Redis
         if (!redisClient || redisClient.status === 'end' || redisClient.status === 'wait') {
             console.log('[ioredis] Initializing or re-establishing Redis connection...');
             const redisUrl = process.env.UPSTASH_REDIS_URL;
@@ -56,11 +57,12 @@ exports.handler = async (event, context) => {
             'https://api.pharesim.me'
         ];
 
-        // La clave del caché ahora vuelve a incluir contentType para cachear posts y reblogs por separado.
+        // La clave del caché ahora incluye contentType para cachear posts y reblogs por separado.
         const cacheKey = `hive:${contentType}:${username}:${parsedLimit}:${start_author || 'null'}:${start_permlink || 'null'}`;
 
         let cachedResponse = null;
         try {
+            // Intenta obtener de Redis, con timeout
             cachedResponse = await Promise.race([redisClient.get(cacheKey), timeoutPromise]);
         } catch (redisErr) {
             console.error(`Error trying to get from Redis for ${cacheKey}:`, redisErr);
@@ -76,7 +78,7 @@ exports.handler = async (event, context) => {
         }
         console.log(`Cache MISS for key: ${cacheKey}. Fetching from Hive.`);
 
-        // Siempre pedimos 20, el máximo.
+        // Siempre pedimos 20, el máximo que Hive puede dar por llamada
         const requestLimitToHive = 20;
 
         const body = {
@@ -94,6 +96,7 @@ exports.handler = async (event, context) => {
         let hiveResponse;
         let hiveError = null;
 
+        // Intenta obtener datos de Hive desde múltiples nodos
         for (const nodeUrl of hiveNodes) {
             console.log(`Attempting fetch with Hive node: ${nodeUrl}`);
             try {
@@ -103,12 +106,12 @@ exports.handler = async (event, context) => {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(body),
                     }),
-                    timeoutPromise
+                    timeoutPromise // Aplica timeout también a la llamada fetch
                 ]);
 
                 if (hiveResponse.ok) {
                     hiveError = null;
-                    break;
+                    break; // Salimos del bucle si encontramos un nodo que funciona
                 } else {
                     const errorText = await hiveResponse.text();
                     hiveError = new Error(`Hive API error at ${nodeUrl}: ${hiveResponse.status} - ${errorText}`);
@@ -151,9 +154,9 @@ exports.handler = async (event, context) => {
                     filteredItems.push(item);
                 }
             } else if (contentType === 'reblogs') {
-                // Filtro para reblogs: debe tener reblogged_by. El autor del reblogged_by debe ser el usuario.
-                // IMPORTANTE: El reblogged_by es un array. Verificamos que contenga al username.
-                if (item.reblogged_by && item.reblogged_by.includes(username)) {
+                // Filtro para reblogs: debe tener reblogged_by (y ser array), debe contener al username,
+                // Y ¡CRUCIAL! el autor de la publicación NO debe ser el username.
+                if (item.reblogged_by && Array.isArray(item.reblogged_by) && item.reblogged_by.includes(username) && item.author !== username) {
                      filteredItems.push(item);
                 }
             }
@@ -165,20 +168,22 @@ exports.handler = async (event, context) => {
 
         // --- DETERMINACIÓN DE LA PRÓXIMA PÁGINA (nextStartAuthor/Permlink) ---
         // La paginación SIEMPRE se basa en el ÚLTIMO elemento de la respuesta ORIGINAL de Hive.
-        // Esto es CRUCIAL para que Hive siga avanzando en el feed del usuario y no se "atasque".
+        // Esto es CRUCIAL para que Hive siga avanzando en el feed del usuario y no se "atasque"
+        // intentando encontrar más posts filtrados si no los hay en el lote actual.
         let nextStartAuthor = null;
         let nextStartPermlink = null;
-        let hasMore = true;
+        let hasMore = true; // Asumimos que hay más hasta que Hive nos diga lo contrario.
 
         if (allFetchedItems.length < requestLimitToHive || allFetchedItems.length === 0) {
-            // Si Hive nos dio menos de 20 posts, o ningún post, no hay más en el feed general.
+            // Si Hive nos dio menos de 20 posts, o ningún post, no hay más en el feed general del blog.
             hasMore = false;
         } else {
+            // Si Hive nos dio un lote completo de 20 posts, asumimos que hay más por pedir.
             // El nextStart siempre apunta al último post de la respuesta CRUDA de Hive.
             const lastItemFromHive = allFetchedItems[allFetchedItems.length - 1];
             nextStartAuthor = lastItemFromHive.author;
             nextStartPermlink = lastItemFromHive.permlink;
-            hasMore = true; // Por defecto true si recibimos un lote completo de Hive.
+            hasMore = true;
         }
 
         const responseData = {
@@ -188,8 +193,9 @@ exports.handler = async (event, context) => {
             hasMore: hasMore
         };
 
+        // Cachea la respuesta solo si hay posts y determina la duración del caché.
         if (currentBatchItems.length > 0) {
-            const cacheDuration = currentBatchItems.every(item => isOldPost(item.created)) ? 60 * 60 * 24 * 30 : 60 * 5;
+            const cacheDuration = currentBatchItems.every(item => isOldPost(item.created)) ? 60 * 60 * 24 * 30 : 60 * 5; // 30 días para posts viejos, 5 minutos para nuevos
             try {
                 await Promise.race([redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', cacheDuration), timeoutPromise]);
                 console.log(`Cache SET for key: ${cacheKey} (${contentType} filtered, duration: ${cacheDuration / 60} min).`);
@@ -211,6 +217,6 @@ exports.handler = async (event, context) => {
             body: JSON.stringify({ error: 'Internal server error', details: error.message }),
         };
     } finally {
-        // No llamamos a redisClient.quit() aquí.
+        // No llamamos a redisClient.quit() aquí, permitiendo la reutilización de la conexión.
     }
 };

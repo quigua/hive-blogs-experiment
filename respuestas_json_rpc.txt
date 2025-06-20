@@ -1,0 +1,49 @@
+curl -s --data '{"jsonrpc":"2.0", "method":"bridge.get_account_posts", "params":{"sort":"blog", "account": "quigua", "limit": 1}, "id":1}' https://api.hive.blog
+
+La respuesta tiene la siguiente estructura:
+{
+  "id": <integer>,
+  "jsonrpc": <string>,
+  "result": [
+    {
+      "post_id": <integer>,
+      "author": <string>,
+      "permlink": <string>,
+      "title": <string>,
+      "body": <string>,
+      "json_metadata": <string>, // Importante: Es una cadena de texto JSON que DEBES parsear
+      "created": <string>,       // Formato ISO 8601 (e.g., "2024-06-18T18:00:00")
+      "payout": <string>,        // Valor con decimales y unidad (e.g., "0.000 HBD")
+      "pending_payout_value": <string>, // Valor con decimales y unidad (e.g., "0.000 HBD")
+      "promoted": <string>,      // Valor con decimales y unidad (e.g., "0.000 HBD")
+      "author_payout": <string>, // Valor con decimales y unidad (e.g., "0.000 HBD")
+      "curator_payout": <string>,// Valor con decimales y unidad (e.g., "0.000 HBD")
+      "fee": <string>,           // Valor con decimales y unidad (e.g., "0.000 HBD")
+      "votes_rshares": <string>, // String de un número muy grande (rshares totales)
+      "abs_rshares": <string>,   // String de un número muy grande (rshares absolutos)
+      "active_votes": [
+        {
+          "rshares": <integer>,    // Número entero
+          "voter": <string>
+        }
+        // ... múltiples objetos de voto
+      ],
+      "url": <string>,           // URL de la publicación (e.g., "/@author/permlink")
+      "link": <string>,          // URL completa de la publicación (e.g., "https://peakd.com/@author/permlink")
+      "desc": <string>,          // Una descripción o resumen del cuerpo
+      "category": <string>,      // La categoría principal/primer tag
+      "app": <string>,           // La aplicación usada para publicar (e.g., "peakd/2024.6.0")
+      "author_rep": <float>,     // Reputación del autor como flotante
+      "author_title": <string>,  // Título personalizado del autor, si existe
+      "image": [
+        <string> // Array de URLs de imágenes
+      ],
+      "tags": [
+        <string> // Array de tags (etiquetas)
+      ],
+      "depth": <integer>,        // Profundidad del comentario (0 para publicaciones raíz)
+      "reblogged_by": <string> // Si ha sido rebloggeado, el nombre de usuario
+    }
+    // ... múltiples objetos de publicación con la misma estructura
+  ]
+}

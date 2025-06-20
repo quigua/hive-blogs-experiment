@@ -1,0 +1,20 @@
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>My JavaScript Page</title>
+        </head>
+        <body>
+            <h1>Hello, JavaScript!</h1>
+         <script src="./hive.min.js"></script>
+<script>
+hive.api.getAccounts(['quigua', 'hiveio'], function(err, response){
+    console.log(err, response);
+});
+hive.api.getDiscussionsByBlog(query, function(err, result) {
+  console.log(err, result);
+});
+
+</script>
+
+        </body>
+        </html>

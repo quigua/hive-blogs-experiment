@@ -90,10 +90,10 @@ try {
 
 // Para los reblogs, no los cargaremos inicialmente en el servidor (Astro).
 // Su estado inicial indica que no se han cargado y que hay potencial para más.
-let initialReblogs = [];
-let initialReblogsNextStartAuthor = '';
-let initialReblogsNextStartPermlink = '';
-let initialReblogsHasMore = true;
+let initialReblogs = []; // Se mantiene vacío
+let initialReblogsNextStartAuthor = ''; // Se mantiene vacío
+let initialReblogsNextStartPermlink = ''; // Se mantiene vacío
+let initialReblogsHasMore = true; // Se mantiene en true para permitir la carga inicial vía cliente
 
 ---
 <!DOCTYPE html>
@@ -192,9 +192,9 @@ let initialReblogsHasMore = true;
         data-content-type="reblogs"
         data-username={USERNAME_TO_FETCH}
         data-posts-per-page={POSTS_PER_PAGE}
-        data-next-start-author=""
-        data-next-start-permlink=""
-        data-has-more-posts="true"
+        data-next-start-author={initialReblogsNextStartAuthor} {/* Usar estos valores */}
+        data-next-start-permlink={initialReblogsNextStartPermlink} {/* Usar estos valores */}
+        data-has-more-posts={initialReblogsHasMore} {/* Usar este valor */}
     >
         <div class="post-list">
             <p>Haz clic en "Cargar más reblogs" para ver el contenido.</p>
@@ -209,6 +209,7 @@ let initialReblogsHasMore = true;
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const FUNCTIONS_BASE_URL = 'https://dreamy-baklava-d17cb6.netlify.app/.netlify/functions';
+            const USERNAME_TO_FETCH = 'quigua'; // Asegurarse de que esta constante esté definida también en el cliente
 
             const tabButtons = document.querySelectorAll('.tab-button');
             const tabContents = document.querySelectorAll('.tab-content');
@@ -254,9 +255,14 @@ let initialReblogsHasMore = true;
                 posts.forEach(post => {
                     const postCard = document.createElement('div');
                     postCard.className = 'post-card';
+                    // Determinar el autor que se muestra: si es un reblog, mostrar reblogged_by
+                    const displayAuthor = post.reblogged_by && post.reblogged_by.length > 0
+                        ? `${post.reblogged_by[0]} (reblog de ${post.author})`
+                        : post.author;
+
                     postCard.innerHTML = `
                         <h3><a href="/post-detail/?author=${post.author}&permlink=${post.permlink}">${post.title}</a></h3>
-                        <p>Por ${post.author} el ${new Date(post.created).toLocaleDateString()}</p>
+                        <p>Por ${displayAuthor} el ${new Date(post.created).toLocaleDateString()}</p>
                         <p>${post.body.substring(0, 150)}...</p>
                     `;
                     targetPostListDiv.appendChild(postCard);
@@ -266,7 +272,7 @@ let initialReblogsHasMore = true;
             const loadPostsForTab = async (tabKey) => {
                 const state = paginationState[tabKey];
                 const contentType = document.getElementById(`${tabKey}-tab-content`).dataset.contentType;
-                const username = document.getElementById(`${tabKey}-tab-content`).dataset.username;
+                const username = document.getElementById(`${tabKey}-tab-content`).dataset.username; // Siempre 'quigua'
                 const postsPerPage = parseInt(document.getElementById(`${tabKey}-tab-content`).dataset.postsPerPage);
 
                 if (!state.hasMorePosts) {
@@ -281,8 +287,10 @@ let initialReblogsHasMore = true;
                     const url = new URL(`${FUNCTIONS_BASE_URL}/get-user-posts`);
                     url.searchParams.append('username', username);
                     url.searchParams.append('limit', postsPerPage);
-                    url.searchParams.append('contentType', contentType); // Especificamos el tipo de contenido
+                    url.searchParams.append('contentType', contentType); // 'posts' o 'reblogs'
 
+                    // Siempre enviar start_author y start_permlink si están disponibles
+                    // para la paginación. Estos valores se actualizan en el backend.
                     if (state.nextStartAuthor && state.nextStartPermlink) {
                         url.searchParams.append('start_author', state.nextStartAuthor);
                         url.searchParams.append('start_permlink', state.nextStartPermlink);
@@ -332,9 +340,11 @@ let initialReblogsHasMore = true;
                     button.classList.add('active');
                     document.getElementById(`${targetTab}-tab-content`).classList.add('active');
 
-                    // Si es la pestaña de reblogs y aún no ha cargado contenido, inicia la carga.
+                    // Si es la pestaña de reblogs y aún no ha cargado contenido (o la primera vez que se activa), inicia la carga.
+                    // La condición `children.length === 1 && tagName === 'P'` es para la primera vez que se carga un tab.
+                    // Para cargas posteriores, solo queremos recargar si el usuario lo pide con el botón "Cargar más".
                     if (targetTab === 'reblogs' && paginationState.reblogs.postListDiv.children.length === 1 && paginationState.reblogs.postListDiv.children[0].tagName === 'P') {
-                        loadPostsForTab('reblogs');
+                         loadPostsForTab('reblogs');
                     }
                 });
             });
