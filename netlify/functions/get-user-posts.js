@@ -11,8 +11,6 @@ function isOldPost(createdDate) {
 }
 
 exports.handler = async (event, context) => {
-    // Aumentamos el timeout para dar más margen a las múltiples llamadas si son necesarias.
-    // 25 segundos es un buen límite para Netlify Functions (máx 26s).
     const timeoutPromise = new Promise((resolve, reject) => {
         setTimeout(() => {
             reject(new Error('Function execution timed out before completing.'));
@@ -46,7 +44,7 @@ exports.handler = async (event, context) => {
         }
 
         const { username, limit, start_author, start_permlink, contentType = 'posts' } = event.queryStringParameters;
-        const parsedLimit = parseInt(limit); // Cuántos posts filtrados queremos devolver
+        const parsedLimit = parseInt(limit);
 
         if (!username || !parsedLimit) {
             return { statusCode: 400, body: JSON.stringify({ error: 'Missing parameters: username or limit.' }) };
@@ -77,13 +75,12 @@ exports.handler = async (event, context) => {
         }
         console.log(`Cache MISS for key: ${cacheKey}. Fetching from Hive.`);
 
-        // --- Lógica de BUCLE para obtener suficientes posts FILTRADOS ---
-        const postsToFetchPerCall = 20; // ¡Mantener en 20, ya que es el límite de Hive!
+        const postsToFetchPerCall = 20;
         let collectedFilteredItems = [];
         let currentHiveStartAuthor = start_author;
         let currentHiveStartPermlink = start_permlink;
         let hiveHasMore = true;
-        let maxIterations = 5; // Limitar el número de llamadas a Hive (20 * 5 = 100 posts brutos máximo)
+        let maxIterations = 5;
 
         while (collectedFilteredItems.length < parsedLimit && hiveHasMore && maxIterations > 0) {
             maxIterations--;
@@ -125,7 +122,7 @@ exports.handler = async (event, context) => {
                     }
                 } catch (error) {
                     hiveError = new Error(`Network error connecting to ${nodeUrl}: ${error.message}`);
-                    console.error(hiveError.message);
+                    console.error(error.message);
                 }
             }
 
@@ -151,7 +148,7 @@ exports.handler = async (event, context) => {
 
             const currentFetchedItems = hiveData.result || [];
             if (currentFetchedItems.length === 0) {
-                hiveHasMore = false; // No hay más posts en el blog de Hive
+                hiveHasMore = false;
                 break;
             }
 
@@ -160,30 +157,20 @@ exports.handler = async (event, context) => {
             currentHiveStartAuthor = lastItemFromHiveBatch.author;
             currentHiveStartPermlink = lastItemFromHiveBatch.permlink;
             
-            // Si el primer item del lote actual es el mismo que el start_permlink de esta llamada,
-            // y no es la primera llamada, significa que Hive nos devolvió el mismo post inicial.
-            // Lo saltamos para evitar duplicados en `collectedFilteredItems`.
-            // Esto es crucial para `condenser_api.get_discussions_by_blog` que incluye el start_permlink.
+            // --- CORRECCIÓN AQUÍ: Declarar itemsToFilter siempre ---
+            let itemsToFilter = currentFetchedItems;
+
+            // Si es la primera llamada a la función (start_author/permlink están presentes)
+            // Y el primer ítem devuelto por Hive es el mismo que el start_permlink,
+            // entonces lo saltamos para evitar duplicados en el *primer* lote general.
             if (start_author && start_permlink && 
                 currentFetchedItems[0].author === start_author && 
-                currentFetchedItems[0].permlink === start_permlink && 
-                collectedFilteredItems.length === 0) { // Solo si es la primera vez que se está intentando recoger.
-                // En el primer llamado del bucle, si ya pasamos start_author/permlink,
-                // Hive puede incluirlo. Si ya hemos recogido items, esto no se aplicaría.
-                // Esta bandera `skippedInitialDuplicate` es más útil si está fuera del bucle
-                // para la primera llamada de la *función completa*, no de cada iteración del bucle.
-                // Sin embargo, para esta lógica de bucle, la clave es asegurar que el `slice(1)`
-                // se aplica solo si el primer elemento del lote coincide con el inicio de la búsqueda.
-                // La forma más robusta es que cada vez que se haga una llamada,
-                // si el primer elemento coincide con el `start_author`/`start_permlink` de esa **misma llamada**,
-                // lo saltemos para no procesar duplicados *dentro de este bucle*.
-                 if (currentHiveStartAuthor === start_author && currentHiveStartPermlink === start_permlink) {
+                currentFetchedItems[0].permlink === start_permlink) {
+                 // Si collectedFilteredItems aún está vacío, significa que es el primer procesamiento del lote.
+                 // Solo saltamos el duplicado si estamos en la primera iteración general de la función.
+                 if (collectedFilteredItems.length === 0) {
                      itemsToFilter = currentFetchedItems.slice(1);
-                 } else {
-                     itemsToFilter = currentFetchedItems;
                  }
-            } else {
-                itemsToFilter = currentFetchedItems;
             }
 
             // Aplicar el filtro según el contentType
@@ -193,67 +180,41 @@ exports.handler = async (event, context) => {
                         collectedFilteredItems.push(item);
                     }
                 } else if (contentType === 'reblogs') {
-                    // Filtro para reblogs: debe tener reblogged_by (y ser array), debe contener al username,
-                    // Y ¡CRUCIAL! el autor de la publicación NO debe ser el username.
                     if (item.reblogged_by && Array.isArray(item.reblogged_by) && item.reblogged_by.includes(username) && item.author !== username) {
                          collectedFilteredItems.push(item);
                     }
                 }
             }
             
-            // Si Hive devolvió menos del límite que le pedimos, significa que no hay más en el feed bruto.
             if (currentFetchedItems.length < postsToFetchPerCall) {
                 hiveHasMore = false;
             }
         } // Fin del bucle while
 
-        // --- Preparar la respuesta final ---
         const postsToSend = collectedFilteredItems.slice(0, parsedLimit);
         
         let finalHasMore = true; 
-        // Determinamos hasMore:
-        // 1. Si no obtuvimos suficientes posts filtrados para llenar `parsedLimit`
-        // Y Hive ya no tiene más posts en su feed bruto (hiveHasMore es false),
-        // entonces no hay más.
         if (collectedFilteredItems.length < parsedLimit && !hiveHasMore) {
             finalHasMore = false;
         } else if (collectedFilteredItems.length >= parsedLimit) {
-             // Si ya tenemos suficientes posts filtrados para esta carga, y potencialmente más,
-             // asumimos que hay más.
              finalHasMore = true;
         } else if (collectedFilteredItems.length === 0 && !hiveHasMore) {
-            // Si no encontramos ningún post filtrado y Hive ya no tiene más posts brutos,
-            // entonces no hay más.
             finalHasMore = false;
         } else if (maxIterations === 0 && collectedFilteredItems.length < parsedLimit) {
-            // Si alcanzamos el máximo de iteraciones y no conseguimos suficientes posts,
-            // pero Hive podría tener más, la bandera `finalHasMore` debería ser true para que el cliente lo intente de nuevo.
             finalHasMore = true;
         }
 
-
-        // La paginación para la siguiente llamada del cliente siempre debe basarse en el
-        // último punto de avance de Hive (currentHiveStartAuthor/permlink),
-        // para que la próxima búsqueda empiece donde la última se detuvo en el feed bruto de Hive.
         let nextClientStartAuthor = currentHiveStartAuthor;
         let nextClientStartPermlink = currentHiveStartPermlink;
 
-        // Caso especial: si hemos enviado exactamente `parsedLimit` posts,
-        // pero Hive aún tiene más que darnos (hiveHasMore es true),
-        // mantenemos la paginación de Hive como está.
-        // Si no hemos logrado enviar el parsedLimit, o si el collectedFilteredItems es <= parsedLimit,
-        // Y Hive YA NO TIENE MÁS (hiveHasMore es false), entonces no hay más posts.
         if (collectedFilteredItems.length === 0 && !hiveHasMore) {
-            finalHasMore = false; // Realmente no hay más.
+            finalHasMore = false;
             nextClientStartAuthor = null;
             nextClientStartPermlink = null;
         } else if (postsToSend.length === 0 && finalHasMore) {
-            // Si no hay posts para enviar en este lote, pero finalHasMore es true,
-            // significa que el cliente debe intentar cargar de nuevo desde el mismo `nextClientStart`
-            // hasta que se encuentren suficientes posts filtrados. Esto es importante.
-            // currentHiveStartAuthor/currentHiveStartPermlink ya tienen el valor correcto.
+            // No se encontraron posts filtrados en este lote, pero Hive podría tener más,
+            // por lo que el cliente debe reintentar con el mismo currentHiveStartAuthor/Permlink.
         } else if (postsToSend.length < parsedLimit && !hiveHasMore) {
-            // Si enviamos menos de `parsedLimit` y ya no hay más de Hive, entonces no hay más.
             finalHasMore = false;
             nextClientStartAuthor = null;
             nextClientStartPermlink = null;
@@ -266,7 +227,6 @@ exports.handler = async (event, context) => {
             hasMore: finalHasMore,
         };
 
-        // Caché de la respuesta
         if (postsToSend.length > 0) {
             const cacheDuration = postsToSend.every(item => isOldPost(item.created)) ? 60 * 60 * 24 * 30 : 60 * 5;
             try {
@@ -277,7 +237,7 @@ exports.handler = async (event, context) => {
             }
         } else if (!finalHasMore) {
              try {
-                await Promise.race([redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', 60 * 60 * 24 * 7), timeoutPromise]); // 7 días para 'no hay más'
+                await Promise.race([redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', 60 * 60 * 24 * 7), timeoutPromise]);
                 console.log(`Cache SET for key: ${cacheKey} (No more items, duration: 7 days).`);
              } catch (redisErr) {
                 console.error(`Error trying to save 'no more items' to Redis ${cacheKey}:`, redisErr);
@@ -297,6 +257,6 @@ exports.handler = async (event, context) => {
             body: JSON.stringify({ error: 'Internal server error', details: error.message }),
         };
     } finally {
-        // No llamamos a redisClient.quit() aquí, permitiendo la reutilización de la conexión.
+        // No llamamos a redisClient.quit() aquí.
     }
 };
