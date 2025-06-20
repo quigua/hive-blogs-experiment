@@ -14,7 +14,7 @@ exports.handler = async (event, context) => {
     const timeoutPromise = new Promise((resolve, reject) => {
         setTimeout(() => {
             reject(new Error('Function execution timed out before completing.'));
-        }, 25000); // 25 segundos
+        }, 25000); // Mantenemos el timeout para seguridad
     });
 
     try {
@@ -43,7 +43,7 @@ exports.handler = async (event, context) => {
             }
         }
 
-        const { username, limit, start_author, start_permlink, contentType = 'posts' } = event.queryStringParameters;
+        const { username, limit, start_author, start_permlink } = event.queryStringParameters;
         const parsedLimit = parseInt(limit);
 
         if (!username || !parsedLimit) {
@@ -56,7 +56,8 @@ exports.handler = async (event, context) => {
             'https://api.pharesim.me'
         ];
 
-        const cacheKey = `hive:${contentType}:${username}:${parsedLimit}:${start_author || 'null'}:${start_permlink || 'null'}`;
+        // *** CAMBIO CLAVE PARA PRUEBA: La clave de caché ahora es solo para 'reblogs' ***
+        const cacheKey = `hive:reblogs_test:${username}:${parsedLimit}:${start_author || 'null'}:${start_permlink || 'null'}`;
 
         let cachedResponse = null;
         try {
@@ -73,172 +74,129 @@ exports.handler = async (event, context) => {
                 body: cachedResponse,
             };
         }
-        console.log(`Cache MISS for key: ${cacheKey}. Fetching from Hive.`);
+        console.log(`Cache MISS for key: ${cacheKey}. Fetching from Hive (ONLY REBLOGS TEST).`);
 
-        const postsToFetchPerCall = 20;
-        let collectedFilteredItems = [];
-        let currentHiveStartAuthor = start_author;
-        let currentHiveStartPermlink = start_permlink;
-        let hiveHasMore = true;
-        let maxIterations = 5;
+        const postsToFetchPerCall = 20; // Límite de Hive
 
-        while (collectedFilteredItems.length < parsedLimit && hiveHasMore && maxIterations > 0) {
-            maxIterations--;
-            console.log(`[LOOP] Iteration ${5 - maxIterations}. Current filtered: ${collectedFilteredItems.length}. Fetching from Hive node...`);
-            
-            const body = {
-                jsonrpc: '2.0',
-                id: 1,
-                method: 'condenser_api.get_discussions_by_blog',
-                params: [{
-                    tag: username,
-                    limit: postsToFetchPerCall,
-                    start_author: currentHiveStartAuthor || undefined,
-                    start_permlink: currentHiveStartPermlink || undefined,
-                }],
-            };
+        const body = {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'condenser_api.get_discussions_by_blog',
+            params: [{
+                tag: username,
+                limit: postsToFetchPerCall,
+                start_author: start_author || undefined,
+                start_permlink: start_permlink || undefined,
+            }],
+        };
 
-            let hiveResponse;
-            let hiveError = null;
+        let hiveResponse;
+        let hiveError = null;
 
-            for (const nodeUrl of hiveNodes) {
-                try {
-                    hiveResponse = await Promise.race([
-                        fetch(nodeUrl, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(body),
-                        }),
-                        timeoutPromise
-                    ]);
+        for (const nodeUrl of hiveNodes) {
+            console.log(`Attempting fetch with Hive node: ${nodeUrl}`);
+            try {
+                hiveResponse = await Promise.race([
+                    fetch(nodeUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    }),
+                    timeoutPromise
+                ]);
 
-                    if (hiveResponse.ok) {
-                        hiveError = null;
-                        break;
-                    } else {
-                        const errorText = await hiveResponse.text();
-                        hiveError = new Error(`Hive API error at ${nodeUrl}: ${hiveResponse.status} - ${errorText}`);
-                        console.error(hiveError.message);
-                    }
-                } catch (error) {
-                    hiveError = new Error(`Network error connecting to ${nodeUrl}: ${error.message}`);
-                    console.error(error.message);
+                if (hiveResponse.ok) {
+                    hiveError = null;
+                    break;
+                } else {
+                    const errorText = await hiveResponse.text();
+                    hiveError = new Error(`Hive API error at ${nodeUrl}: ${hiveResponse.status} - ${errorText}`);
+                    console.error(hiveError.message);
                 }
+            } catch (error) {
+                hiveError = new Error(`Network error connecting to ${nodeUrl}: ${error.message}`);
+                console.error(error.message);
             }
+        }
 
-            if (!hiveResponse || !hiveResponse.ok) {
-                console.error("Failed to fetch from any Hive node in loop. Breaking.");
-                hiveHasMore = false;
-                if (collectedFilteredItems.length === 0) {
-                    throw hiveError || new Error('Could not connect to any Hive node during data collection.');
-                }
-                break;
+        if (!hiveResponse || !hiveResponse.ok) {
+            throw hiveError || new Error('Could not connect to any Hive node.');
+        }
+
+        const hiveData = await hiveResponse.json();
+
+        if (hiveData.error) {
+            console.error('Hive error:', hiveData.error);
+            return { statusCode: 500, body: JSON.stringify({ error: 'Hive API error', details: hiveData.error }) };
+        }
+
+        const allFetchedItems = hiveData.result || [];
+        let filteredReblogs = [];
+
+        // *** APLICAR SOLO EL FILTRO DE REBLOGS ***
+        let itemsToFilter = allFetchedItems;
+
+        // Si es la primera llamada a la función (start_author/permlink están presentes)
+        // Y el primer ítem devuelto por Hive es el mismo que el start_permlink,
+        // entonces lo saltamos para evitar duplicados.
+        if (start_author && start_permlink && 
+            allFetchedItems[0] && // Asegurarse de que el primer elemento existe
+            allFetchedItems[0].author === start_author && 
+            allFetchedItems[0].permlink === start_permlink) {
+             itemsToFilter = allFetchedItems.slice(1);
+        }
+
+        for (const item of itemsToFilter) {
+            // Filtro para reblogs: debe tener reblogged_by (y ser array), debe contener al username,
+            // Y el autor de la publicación NO debe ser el username.
+            if (item.reblogged_by && Array.isArray(item.reblogged_by) && item.reblogged_by.includes(username) && item.author !== username) {
+                 filteredReblogs.push(item);
             }
-
-            const hiveData = await hiveResponse.json();
-
-            if (hiveData.error) {
-                console.error('Hive error during loop:', hiveData.error);
-                hiveHasMore = false;
-                if (collectedFilteredItems.length === 0) {
-                    return { statusCode: 500, body: JSON.stringify({ error: 'Hive API error during data collection', details: hiveData.error }) };
-                }
-                break;
-            }
-
-            const currentFetchedItems = hiveData.result || [];
-            if (currentFetchedItems.length === 0) {
-                hiveHasMore = false;
-                break;
-            }
-
-            // Actualizar la paginación para la siguiente llamada a Hive
-            const lastItemFromHiveBatch = currentFetchedItems[currentFetchedItems.length - 1];
-            currentHiveStartAuthor = lastItemFromHiveBatch.author;
-            currentHiveStartPermlink = lastItemFromHiveBatch.permlink;
-            
-            // --- CORRECCIÓN AQUÍ: Declarar itemsToFilter siempre ---
-            let itemsToFilter = currentFetchedItems;
-
-            // Si es la primera llamada a la función (start_author/permlink están presentes)
-            // Y el primer ítem devuelto por Hive es el mismo que el start_permlink,
-            // entonces lo saltamos para evitar duplicados en el *primer* lote general.
-            if (start_author && start_permlink && 
-                currentFetchedItems[0].author === start_author && 
-                currentFetchedItems[0].permlink === start_permlink) {
-                 // Si collectedFilteredItems aún está vacío, significa que es el primer procesamiento del lote.
-                 // Solo saltamos el duplicado si estamos en la primera iteración general de la función.
-                 if (collectedFilteredItems.length === 0) {
-                     itemsToFilter = currentFetchedItems.slice(1);
-                 }
-            }
-
-            // Aplicar el filtro según el contentType
-            for (const item of itemsToFilter) {
-                if (contentType === 'posts') {
-                    if (item.author === username && (!item.reblogged_by || item.reblogged_by.length === 0)) {
-                        collectedFilteredItems.push(item);
-                    }
-                } else if (contentType === 'reblogs') {
-                    if (item.reblogged_by && Array.isArray(item.reblogged_by) && item.reblogged_by.includes(username) && item.author !== username) {
-                         collectedFilteredItems.push(item);
-                    }
-                }
-            }
-            
-            if (currentFetchedItems.length < postsToFetchPerCall) {
-                hiveHasMore = false;
-            }
-        } // Fin del bucle while
-
-        const postsToSend = collectedFilteredItems.slice(0, parsedLimit);
+        }
         
-        let finalHasMore = true; 
-        if (collectedFilteredItems.length < parsedLimit && !hiveHasMore) {
-            finalHasMore = false;
-        } else if (collectedFilteredItems.length >= parsedLimit) {
-             finalHasMore = true;
-        } else if (collectedFilteredItems.length === 0 && !hiveHasMore) {
-            finalHasMore = false;
-        } else if (maxIterations === 0 && collectedFilteredItems.length < parsedLimit) {
-            finalHasMore = true;
+        // --- Simplificación de la paginación para esta prueba ---
+        const postsToSend = filteredReblogs.slice(0, parsedLimit);
+        let nextStartAuthor = null;
+        let nextStartPermlink = null;
+        let hasMore = false;
+
+        // Si Hive nos dio un lote completo y aún podríamos tener más reblogs más allá de los filtrados
+        if (allFetchedItems.length === postsToFetchPerCall && filteredReblogs.length > 0) {
+            // El nextStart siempre apunta al último post BRUTO de la respuesta de Hive.
+            // Esto es crucial para que Hive siga avanzando en el feed, incluso si los filtrados son pocos.
+            const lastItemFromHive = allFetchedItems[allFetchedItems.length - 1];
+            nextStartAuthor = lastItemFromHive.author;
+            nextStartPermlink = lastItemFromHive.permlink;
+            hasMore = true;
+        } else if (allFetchedItems.length === postsToFetchPerCall && filteredReblogs.length === 0) {
+            // Si Hive dio un lote completo pero no hubo reblogs, también hay que avanzar la paginación
+            // para que el cliente pueda intentar una siguiente búsqueda más profunda.
+            const lastItemFromHive = allFetchedItems[allFetchedItems.length - 1];
+            nextStartAuthor = lastItemFromHive.author;
+            nextStartPermlink = lastItemFromHive.permlink;
+            hasMore = true; // Forzar hasMore para que el cliente siga pidiendo.
         }
 
-        let nextClientStartAuthor = currentHiveStartAuthor;
-        let nextClientStartPermlink = currentHiveStartPermlink;
-
-        if (collectedFilteredItems.length === 0 && !hiveHasMore) {
-            finalHasMore = false;
-            nextClientStartAuthor = null;
-            nextClientStartPermlink = null;
-        } else if (postsToSend.length === 0 && finalHasMore) {
-            // No se encontraron posts filtrados en este lote, pero Hive podría tener más,
-            // por lo que el cliente debe reintentar con el mismo currentHiveStartAuthor/Permlink.
-        } else if (postsToSend.length < parsedLimit && !hiveHasMore) {
-            finalHasMore = false;
-            nextClientStartAuthor = null;
-            nextClientStartPermlink = null;
-        }
 
         const responseData = {
             posts: postsToSend,
-            nextStartAuthor: nextClientStartAuthor,
-            nextStartPermlink: nextClientStartPermlink,
-            hasMore: finalHasMore,
+            nextStartAuthor: nextStartAuthor,
+            nextStartPermlink: nextStartPermlink,
+            hasMore: hasMore,
         };
 
         if (postsToSend.length > 0) {
             const cacheDuration = postsToSend.every(item => isOldPost(item.created)) ? 60 * 60 * 24 * 30 : 60 * 5;
             try {
                 await Promise.race([redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', cacheDuration), timeoutPromise]);
-                console.log(`Cache SET for key: ${cacheKey} (${contentType} filtered, duration: ${cacheDuration / 60} min).`);
+                console.log(`Cache SET for key: ${cacheKey} (reblogs filtered, duration: ${cacheDuration / 60} min).`);
             } catch (redisErr) {
                 console.error(`Error trying to save to Redis ${cacheKey}:`, redisErr);
             }
-        } else if (!finalHasMore) {
+        } else if (!hasMore) {
              try {
                 await Promise.race([redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', 60 * 60 * 24 * 7), timeoutPromise]);
-                console.log(`Cache SET for key: ${cacheKey} (No more items, duration: 7 days).`);
+                console.log(`Cache SET for key: ${cacheKey} (No more reblogs, duration: 7 days).`);
              } catch (redisErr) {
                 console.error(`Error trying to save 'no more items' to Redis ${cacheKey}:`, redisErr);
              }
